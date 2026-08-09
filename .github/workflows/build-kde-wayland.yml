@@ -858,7 +858,7 @@ jobs:
 
           sync_gitee_release() (
             local gitee_api='https://gitee.com/api/v5'
-            local gitee_owner gitee_repo gitee_target_commitish
+            local gitee_repository gitee_owner gitee_repo gitee_target_commitish
             local gitee_release_id gitee_release_exists=false gitee_status
             local sync_dir gitee_repo_json gitee_release_json gitee_attachments_json
             local gitee_response_json gitee_payload_json gitee_notes_path
@@ -869,22 +869,27 @@ jobs:
               echo '未配置 GITEE_TOKEN，无法同步 Gitee Release。' >&2
               return 1
             fi
-            case "$GITEE_RELEASE_REPOSITORY" in
+            gitee_repository="$(printf '%s' "$GITEE_RELEASE_REPOSITORY" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+            case "$gitee_repository" in
               */*)
-                gitee_owner="${GITEE_RELEASE_REPOSITORY%%/*}"
-                gitee_repo="${GITEE_RELEASE_REPOSITORY#*/}"
+                gitee_owner="${gitee_repository%%/*}"
+                gitee_repo="${gitee_repository#*/}"
                 ;;
               *)
-                echo "GITEE_RELEASE_REPOSITORY 必须是 owner/repo：$GITEE_RELEASE_REPOSITORY" >&2
+                echo "GITEE_RELEASE_REPOSITORY 必须是 owner/repo：$gitee_repository" >&2
                 return 1
                 ;;
             esac
-            if [[ -z "$gitee_owner" || -z "$gitee_repo" || "$gitee_repo" == */* || \
-                  ! "$gitee_owner" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || \
-                  ! "$gitee_repo" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-              echo "GITEE_RELEASE_REPOSITORY 格式无效：$GITEE_RELEASE_REPOSITORY" >&2
+            case "$gitee_owner" in ''|*[!A-Za-z0-9._-]*)
+              echo "GITEE_RELEASE_REPOSITORY 格式无效：$gitee_repository" >&2
               return 1
-            fi
+              ;;
+            esac
+            case "$gitee_repo" in ''|*/*|*[!A-Za-z0-9._-]*)
+              echo "GITEE_RELEASE_REPOSITORY 格式无效：$gitee_repository" >&2
+              return 1
+              ;;
+            esac
 
             if ! sync_dir="$(mktemp -d)" || [ -z "$sync_dir" ] || [ ! -d "$sync_dir" ]; then
               echo '无法创建 Gitee 同步临时目录。' >&2
