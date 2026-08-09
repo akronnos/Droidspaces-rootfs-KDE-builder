@@ -12,13 +12,14 @@ const timeoutMs = positiveInteger(process.env.GITEE_UPLOAD_TIMEOUT_MS || "600000
 try {
   const asset = await readFile(assetPath);
   const form = new FormData();
+  // Gitee documents attachment authentication as a multipart field.
+  form.set("access_token", token);
   form.set("file", new Blob([asset], { type: "application/octet-stream" }), basename(assetPath));
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
       accept: "application/json",
-      authorization: `token ${token}`,
     },
     body: form,
     signal: AbortSignal.timeout(timeoutMs),
@@ -32,9 +33,7 @@ try {
   process.exitCode = response.ok ? 0 : 1;
 } catch (error) {
   await writeFile(responsePath, "").catch(() => {});
-  const name = error instanceof Error ? error.name : "Error";
-  const message = error instanceof Error ? error.message.replaceAll(token, "***") : String(error);
-  console.error(`Gitee attachment upload transport error: ${name}: ${message}`);
+  console.error(`Gitee attachment upload transport error: ${describeTransportError(error, token)}`);
   process.stdout.write("000\n");
   process.exitCode = 1;
 }
@@ -48,4 +47,25 @@ function required(name) {
 function positiveInteger(value, name) {
   if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`${name} must be a positive integer`);
   return Number(value);
+}
+
+function describeTransportError(error, secret) {
+  const details = [];
+  const outer = error instanceof Error ? error : new Error(String(error));
+  details.push(`name=${redact(outer.name, secret)}`);
+  details.push(`message=${redact(outer.message, secret)}`);
+
+  const cause = outer.cause;
+  if (cause && typeof cause === "object") {
+    for (const key of ["name", "code", "message", "errno", "syscall", "hostname"]) {
+      if (typeof cause[key] === "string" || typeof cause[key] === "number") {
+        details.push(`cause_${key}=${redact(cause[key], secret)}`);
+      }
+    }
+  }
+  return details.join(" ");
+}
+
+function redact(value, secret) {
+  return String(value).replaceAll(secret, "***").replaceAll(/\s+/g, " ");
 }

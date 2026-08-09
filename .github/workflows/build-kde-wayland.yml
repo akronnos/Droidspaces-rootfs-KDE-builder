@@ -1286,5 +1286,9 @@ jobs:
                 echo '请查看此步骤日志中的 Gitee API 响应；下一次软件包发布会自动重试。'
               } >> "$GITHUB_STEP_SUMMARY"
             fi
+            if [ "$gitee_sync_only" = true ]; then
+              echo '仅同步 Gitee 模式下镜像未完成，工作流按失败处理。' >&2
+              exit 1
+            fi
           fi
           echo "已更新 $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$release_tag"
