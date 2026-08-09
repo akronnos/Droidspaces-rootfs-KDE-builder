@@ -368,6 +368,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: 下载软件包资产
         if: ${{ always() && github.event.inputs.sync_gitee_only != 'true' }}
         uses: actions/download-artifact@v7
@@ -1091,32 +1096,29 @@ jobs:
               local asset_name="${asset_path##*/}"
               local attempt=1
               local max_attempts=3
-              local curl_exit
+              local upload_exit upload_status
 
-              # 固定 HTTP/1.1 并关闭 Expect 协商；Gitee 可能在接收完附件后较久才返回，
-              # 因此不用低速阈值提前中断上传，超时后再检查服务端是否已实际接收附件。
+              # 使用 Node 原生 FormData，与 china-mirror-sync 的 Gitee 适配器保持一致。
+              # 不手工指定 multipart 边界、Expect 或 HTTP 版本，由 Node fetch 处理请求。
               while [ "$attempt" -le "$max_attempts" ]; do
                 gitee_status=''
-                curl_exit=0
+                upload_exit=0
                 : > "$gitee_response_json"
-                if gitee_status="$(curl --silent --show-error --location --http1.1 \
-                  --connect-timeout 20 --max-time 900 \
-                  --request POST \
-                  --output "$gitee_response_json" --write-out '%{http_code}' \
-                  --header "Authorization: token ${GITEE_TOKEN}" \
-                  --header 'Accept: application/json' \
-                  --header 'Expect:' \
-                  --form "file=@${asset_path}" \
-                  "$gitee_api/repos/$gitee_owner/$gitee_repo/releases/$gitee_release_id/attach_files")"; then
+                if gitee_status="$(GITEE_UPLOAD_URL="$gitee_api/repos/$gitee_owner/$gitee_repo/releases/$gitee_release_id/attach_files" \
+                  GITEE_UPLOAD_TOKEN="$GITEE_TOKEN" \
+                  GITEE_UPLOAD_ASSET_PATH="$asset_path" \
+                  GITEE_UPLOAD_RESPONSE_PATH="$gitee_response_json" \
+                  GITEE_UPLOAD_TIMEOUT_MS=600000 \
+                  node "$GITHUB_WORKSPACE/scripts/upload-gitee-release-asset.mjs")"; then
                   if require_gitee_success "$gitee_status" "$gitee_response_json"; then
                     return 0
                   fi
                 else
-                  curl_exit=$?
+                  upload_exit=$?
                 fi
 
-                if [ "$curl_exit" -ne 0 ]; then
-                  echo "Gitee 附件上传请求中断（curl exit ${curl_exit}，HTTP ${gitee_status:-000}）：$asset_name" >&2
+                if [ "$upload_exit" -ne 0 ]; then
+                  echo "Gitee 附件上传请求中断（node exit ${upload_exit}，HTTP ${gitee_status:-000}）：$asset_name" >&2
                   if [ -s "$gitee_response_json" ]; then
                     printf 'Gitee 响应（前 1000 字节）：' >&2
                     head -c 1000 "$gitee_response_json" >&2
@@ -1125,12 +1127,14 @@ jobs:
                 fi
 
                 # 请求超时后服务端可能仍已写入附件，不能盲目重传。
+                upload_status="$gitee_status"
                 if gitee_list_attachments && gitee_attachment_exists "$asset_name"; then
                   echo "Gitee 已接收附件但未返回响应：$asset_name"
                   return 0
                 fi
 
-                case "$gitee_status" in
+                # gitee_list_attachments 会更新 gitee_status，重试判定必须使用上传请求本身的状态。
+                case "$upload_status" in
                   ''|000|408|429|5??|522|524)
                     ;;
                   *)
