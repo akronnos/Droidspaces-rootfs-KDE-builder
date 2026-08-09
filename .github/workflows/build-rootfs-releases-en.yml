@@ -22,7 +22,7 @@ on:
         description: 'Custom username (default: Gold)'
         required: false
         type: string
-        default: 'Gold'
+        default: 'akronnos'
       build_KDE:
         description: 'KDE desktop choice (conc-compact, min-minimal, mobile-mobile edition, none-no KDE)'
         required: true
