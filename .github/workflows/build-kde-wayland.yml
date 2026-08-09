@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: ''
+      sync_gitee_only:
+        description: 仅重试将固定 Release 同步到 Gitee，不重新构建软件包
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -82,6 +87,7 @@ jobs:
 
       - name: 将请求的源解析为单个提交
         id: resolve
+        if: ${{ github.event.inputs.sync_gitee_only != 'true' }}
         env:
           ANLAND_REPO: ${{ inputs.anland_repo }}
           ANLAND_REF: ${{ inputs.anland_ref }}
@@ -102,6 +108,7 @@ jobs:
   build:
     name: 构建 ${{ matrix.target }} 软件包
     needs: prepare
+    if: ${{ github.event.inputs.sync_gitee_only != 'true' }}
     runs-on: ubuntu-24.04-arm
     # 单个平台失败不阻止其余包和 Release 合并；Release 阶段会复用上一版该平台资产。
     continue-on-error: true
@@ -343,7 +350,7 @@ jobs:
           echo "已将 $package_count 个文件打包进 $asset_name（构建时间：$build_time）"
 
       - name: 上传 Release 资产
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: anland-kde-package-${{ matrix.target }}
           path: ${{ steps.package.outputs.asset_path }}
@@ -362,8 +369,8 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: 下载软件包资产
-        if: ${{ always() }}
-        uses: actions/download-artifact@v4
+        if: ${{ always() && github.event.inputs.sync_gitee_only != 'true' }}
+        uses: actions/download-artifact@v7
         with:
           pattern: anland-kde-package-*
           path: release-assets
@@ -377,6 +384,7 @@ jobs:
           ANLAND_COMMIT: ${{ needs.prepare.outputs.anland_commit }}
           REQUEST_ID: ${{ inputs.request_id }}
           BUILD_TARGET_INPUT: ${{ inputs.build_target }}
+          GITEE_SYNC_ONLY: ${{ github.event.inputs.sync_gitee_only }}
           # 此令牌只暴露给不执行外部构建脚本的 Release 步骤。
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_RELEASE_REPOSITORY: ${{ vars.GITEE_RELEASE_REPOSITORY || 'Zxc20060226/Droidspaces-rootfs-KDE-builder' }}
@@ -388,6 +396,14 @@ jobs:
           mkdir -p "$release_dir"
           rolling_release_tag="anland-kde-packages"
           release_targets=(Arch Debian13 ubuntu2604 Fedora43 Fedora44)
+          gitee_sync_only="${GITEE_SYNC_ONLY:-false}"
+          case "$gitee_sync_only" in
+            true|false) ;;
+            *)
+              echo "GITEE_SYNC_ONLY 必须是 true 或 false：$gitee_sync_only" >&2
+              exit 1
+              ;;
+          esac
           declare -A asset_by_target=()
           declare -A asset_time_by_target=()
           declare -A asset_source_by_target=()
@@ -433,6 +449,26 @@ jobs:
               Fedora43) printf '%s\n' 'fedora43' ;;
               Fedora44) printf '%s\n' 'fedora44' ;;
               *) echo "不支持的构建目标：$1" >&2; return 1 ;;
+            esac
+          }
+
+          asset_matches_target() {
+            local target="$1"
+            local name="$2"
+            local prefix arch legacy
+            prefix="$(asset_prefix_for_target "$target")"
+            arch="$(asset_arch_for_target "$target")"
+            case "$target" in
+              Arch) legacy='anland-kde-arch-aarch64.tar.gz' ;;
+              Debian13) legacy='anland-kde-debian13-arm64.tar.gz' ;;
+              ubuntu2604) legacy='anland-kde-ubuntu2604-arm64.tar.gz' ;;
+              Fedora43) legacy='anland-kde-fedora43-aarch64.tar.gz' ;;
+              Fedora44) legacy='anland-kde-fedora44-aarch64.tar.gz' ;;
+              *) return 1 ;;
+            esac
+            case "$name" in
+              "${prefix}"*"-${arch}.tar.gz"|"$legacy") return 0 ;;
+              *) return 1 ;;
             esac
           }
 
@@ -574,7 +610,7 @@ jobs:
           done
 
           # 单平台选择失败时不更新滚动 Release；其他平台始终从固定 Release 补齐。
-          if [ -n "$selected_prefix" ]; then
+          if [ "$gitee_sync_only" != true ] && [ -n "$selected_prefix" ]; then
             selected_target="$BUILD_TARGET_INPUT"
             selected_missing=false
             for target in "${missing_targets[@]}"; do
@@ -621,9 +657,12 @@ jobs:
             done
           fi
 
-          if [ "${#updated_targets[@]}" -eq 0 ]; then
+          if [ "${#updated_targets[@]}" -eq 0 ] && [ "$gitee_sync_only" != true ]; then
             echo "本次没有任何平台生成新资产，不更新滚动 Release。" >&2
             exit 1
+          fi
+          if [ "$gitee_sync_only" = true ]; then
+            echo '仅重试同步 Gitee 镜像；复用 GitHub 固定 Release 中的全部资产。'
           fi
 
           for target in "${release_targets[@]}"; do
@@ -631,17 +670,27 @@ jobs:
             test -f "$release_dir/$asset"
           done
 
-          cp scripts/install-anland-kde.sh "$release_dir/install-anland-kde.sh"
-          chmod +x "$release_dir/install-anland-kde.sh"
-          {
-            printf 'format=1\n'
-            printf 'release_tag=%s\n' "$rolling_release_tag"
-            printf 'revision=run-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'generated_at=%s\n' "$build_time"
-            for target in "${release_targets[@]}"; do
-              printf '%s=%s\n' "$(archive_target_for_target "$target")" "${asset_by_target[$target]}"
-            done
-          } > "$release_dir/anland-kde-manifest"
+          if [ "$gitee_sync_only" = true ]; then
+            gh release download "$rolling_release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern 'install-anland-kde.sh' \
+              --pattern 'anland-kde-manifest' \
+              --dir "$release_dir"
+            test -f "$release_dir/install-anland-kde.sh"
+            test -f "$release_dir/anland-kde-manifest"
+          else
+            cp scripts/install-anland-kde.sh "$release_dir/install-anland-kde.sh"
+            chmod +x "$release_dir/install-anland-kde.sh"
+            {
+              printf 'format=1\n'
+              printf 'release_tag=%s\n' "$rolling_release_tag"
+              printf 'revision=run-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+              printf 'generated_at=%s\n' "$build_time"
+              for target in "${release_targets[@]}"; do
+                printf '%s=%s\n' "$(archive_target_for_target "$target")" "${asset_by_target[$target]}"
+              done
+            } > "$release_dir/anland-kde-manifest"
+          fi
 
           format_target_list() {
             local target text=""
@@ -660,6 +709,11 @@ jobs:
           fi
 
           release_tag="$rolling_release_tag"
+          if [ "$gitee_sync_only" = true ]; then
+            gitee_sync_mode='仅重试 Gitee 镜像同步'
+            echo '跳过 GitHub Release 更新，仅补同步 Gitee 镜像。'
+          else
+            gitee_sync_mode="本次 GitHub 构建目标：${BUILD_TARGET_INPUT}"
           release_asset_table="$(printf '%s\n' \
             '| 压缩包 | 目标系统 | 构建时间 |' \
             '| --- | --- | --- |')"
@@ -712,26 +766,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --dir "$rollback_dir"
           fi
-
-          asset_matches_target() {
-            local target="$1"
-            local name="$2"
-            local prefix arch legacy
-            prefix="$(asset_prefix_for_target "$target")"
-            arch="$(asset_arch_for_target "$target")"
-            case "$target" in
-              Arch) legacy='anland-kde-arch-aarch64.tar.gz' ;;
-              Debian13) legacy='anland-kde-debian13-arm64.tar.gz' ;;
-              ubuntu2604) legacy='anland-kde-ubuntu2604-arm64.tar.gz' ;;
-              Fedora43) legacy='anland-kde-fedora43-aarch64.tar.gz' ;;
-              Fedora44) legacy='anland-kde-fedora44-aarch64.tar.gz' ;;
-              *) return 1 ;;
-            esac
-            case "$name" in
-              "${prefix}"*"-${arch}.tar.gz"|"$legacy") return 0 ;;
-              *) return 1 ;;
-            esac
-          }
 
           delete_stale_target_assets() {
             local target="$1"
@@ -855,6 +889,7 @@ jobs:
           fi
           release_mutated=false
           trap - EXIT
+          fi
 
           sync_gitee_release() (
             local gitee_api='https://gitee.com/api/v5'
@@ -1056,22 +1091,37 @@ jobs:
               local asset_name="${asset_path##*/}"
               local attempt=1
               local max_attempts=3
+              local curl_exit
 
-              # 附件上传链路可能在 HTTP/2 或 Expect: 100-continue 协商时无响应；
-              # 超时后先检查服务端是否已实际接收该附件，避免重复上传。
+              # 固定 HTTP/1.1 并关闭 Expect 协商；Gitee 可能在接收完附件后较久才返回，
+              # 因此不用低速阈值提前中断上传，超时后再检查服务端是否已实际接收附件。
               while [ "$attempt" -le "$max_attempts" ]; do
                 gitee_status=''
-                if gitee_status="$(curl --silent --show-error --http1.1 \
-                  --connect-timeout 20 --max-time 180 --speed-time 60 --speed-limit 1024 \
+                curl_exit=0
+                : > "$gitee_response_json"
+                if gitee_status="$(curl --silent --show-error --location --http1.1 \
+                  --connect-timeout 20 --max-time 900 \
                   --request POST \
                   --output "$gitee_response_json" --write-out '%{http_code}' \
                   --header "Authorization: token ${GITEE_TOKEN}" \
                   --header 'Accept: application/json' \
                   --header 'Expect:' \
                   --form "file=@${asset_path}" \
-                  "$gitee_api/repos/$gitee_owner/$gitee_repo/releases/$gitee_release_id/attach_files")" && \
-                    require_gitee_success "$gitee_status" "$gitee_response_json"; then
-                  return 0
+                  "$gitee_api/repos/$gitee_owner/$gitee_repo/releases/$gitee_release_id/attach_files")"; then
+                  if require_gitee_success "$gitee_status" "$gitee_response_json"; then
+                    return 0
+                  fi
+                else
+                  curl_exit=$?
+                fi
+
+                if [ "$curl_exit" -ne 0 ]; then
+                  echo "Gitee 附件上传请求中断（curl exit ${curl_exit}，HTTP ${gitee_status:-000}）：$asset_name" >&2
+                  if [ -s "$gitee_response_json" ]; then
+                    printf 'Gitee 响应（前 1000 字节）：' >&2
+                    head -c 1000 "$gitee_response_json" >&2
+                    echo >&2
+                  fi
                 fi
 
                 # 请求超时后服务端可能仍已写入附件，不能盲目重传。
@@ -1197,7 +1247,7 @@ jobs:
               '压缩包内包含对应系统的 patched KWin/Xwayland 包；`anland-kde-manifest` 精确映射目标系统到资产。' \
               '' \
               "- Gitee 同步时间：${build_time}" \
-              "- 本次 GitHub 构建目标：${BUILD_TARGET_INPUT}" \
+              "- 同步模式：${gitee_sync_mode}" \
               '- 架构：仅 ARM64/aarch64' \
               '')"
             gitee_notes_path="$sync_dir/release-notes.md"
