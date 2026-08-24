@@ -26,8 +26,9 @@ ARG ANLAND_KDE_PACKAGE_REVISION=unknown
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
 COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
+COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
 
-RUN chmod +x /usr/local/sbin/install-anland-kde && \
+RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && \
     sed -i '/^#ParallelDownloads/s/^#//' /etc/pacman.conf && \
     sed -i '/NoExtract.*locale/d' /etc/pacman.conf && \
     sed -i '/NoExtract.*i18n/d' /etc/pacman.conf && \
@@ -58,6 +59,21 @@ RUN chmod +x /usr/local/sbin/install-anland-kde && \
         dolphin kate kinfocenter mesa-utils libpulse vulkan-tools aha clinfo dmidecode wayland-utils xorg-server \
         kfind plasma-systemmonitor filelight glmark2 vkmark systemsettings kscreenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
         kimageformats plasma-browser-integration libcanberra gstreamer gst-plugins-base gst-plugins-good sound-theme-freedesktop chromium; \
+    fi && \
+    # 移动版 KDE
+    if [ "$BUILD_KDE" = "mobile" ]; then \
+        pacman -S --noconfirm --needed \
+        xorg-xrandr noto-fonts-cjk noto-fonts-emoji plasma-desktop plasma-workspace \
+        plasma-mobile plasma-settings plasma-camera plasma-keyboard plasma-nano \
+        kwin kwin-x11 qt6-wayland qt6-svg qt6-virtualkeyboard wayland-utils xorg-server \
+        pipewire pipewire-pulse wireplumber powerdevil plasma-pa upower \
+        kscreen ark konsole qmlkonsole dolphin kate kinfocenter mesa-utils libpulse vulkan-tools \
+        aha clinfo dmidecode kfind plasma-systemmonitor filelight glmark2 vkmark \
+        systemsettings kscreenlocker kio-extras xdg-user-dirs \
+        dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers kimageformats \
+        plasma-browser-integration angelfish kclock libcanberra chromium \
+        gstreamer gst-plugins-base gst-plugins-good sound-theme-freedesktop \
+        polkit-kde-agent; \
     fi && \
     # Arch 强制安装，但是这玩意不开硬件访问会导致桌面闪退
     if [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "min" ] ; then \
@@ -103,7 +119,7 @@ RUN if [ "$ENABLE_anland_kde_ARG" = "true" ]; then \
         echo "--> [enabled] Installing Anland KDE packages (${ANLAND_KDE_PACKAGE_REVISION})..." && \
         ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
         ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
-        /usr/local/sbin/install-anland-kde && \
+        /usr/local/sbin/install-anland-kde --1 && \
         echo "--> [enabled] Anland KDE support installed"; \
     fi
 
@@ -215,7 +231,11 @@ Enabled=false
 EOF
     fi
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] ; then
+    if [ "$BUILD_KDE_plus" = "true" ] && [ "$BUILD_KDE" = "mobile" ] ; then
+        install -Dm644 /tmp/droidspaces-start/plasma-mobile.service /etc/systemd/system/plasma-mobile.service
+        mkdir -p /etc/systemd/system/multi-user.target.wants
+        ln -sf /etc/systemd/system/plasma-mobile.service /etc/systemd/system/multi-user.target.wants/plasma-mobile.service
+    elif [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] ; then
     install -Dm644 /tmp/droidspaces-start/plasma-wayland.service /etc/systemd/system/plasma-wayland.service
     mkdir -p /etc/systemd/system/multi-user.target.wants
     ln -sf /etc/systemd/system/plasma-wayland.service /etc/systemd/system/multi-user.target.wants/plasma-wayland.service
@@ -229,16 +249,7 @@ EOF_RUN
 
 # 下载并安装 Mesa
 RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
-        echo "--> [开启] 正在下载并安装最新版 Mesa 驱动..." && \
-        URL=$(curl -s https://api.github.com/repos/lfdevs/mesa-for-android-container/releases/latest | \
-        jq -r '.assets[] | select(.name | test("mesa-for-android-container_.*_archlinux_arm64\\.tar")) | .browser_download_url' | head -1) && \
-        if [ -z "$URL" ] || [ "$URL" = "null" ]; then echo "获取下载链接失败，可能是触发了 GitHub API 速率限制"; exit 1; fi && \
-        wget -q --tries=5 --waitretry=3 -O /tmp/mesa.tar "$URL" && \
-        tar -xf /tmp/mesa.tar -C /tmp && \
-        cp /etc/pacman.conf /tmp/pacman-nosig.conf && \
-        sed -i 's/.*SigLevel.*/SigLevel = Never/g' /tmp/pacman-nosig.conf && \
-        pacman --config /tmp/pacman-nosig.conf -U --noconfirm /tmp/*.pkg.tar.* && \
-        rm -f /tmp/mesa.tar /tmp/*.pkg.tar.* /tmp/pacman-nosig.conf /tmp/*.sig ; \
+        /usr/local/sbin/install-mesa --1; \
     else \
         echo "--> [跳过] 未开启 Mesa 驱动安装"; \
     fi
