@@ -409,7 +409,7 @@ COPY --from=jupiter-hw-support /rpms /tmp/packages/jupiter-hw-support
 COPY scripts/armada/ /tmp/armada-scripts/
 
 RUN dnf install -y --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release && \
-    dnf install -y --setopt=install_weak_deps=False \
+    dnf install -y --nogpgcheck --setopt=install_weak_deps=False --setopt=terra.repo_gpgcheck=0 --skip-unavailable \
     /tmp/packages/mangohud/mangohud-*.fc44.armada.*.rpm \
     /tmp/packages/gamescope/terra-gamescope{,-libs}-[0-9]*.aarch64.rpm \
     steam-devices vulkan-loader vulkan-tools gamemode gtk2 openal-soft xorg-x11-server-Xwayland xorg-x11-server-Xvfb \
