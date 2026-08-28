@@ -42,7 +42,7 @@ if [[ "$desktop" != none ]]; then
     ROOTFS_DIR="$rootfs" "$profile" configure-environment "$backend"
 fi
 
-if [[ "$desktop" == kde ]]; then
+if [[ "$desktop" == kde || "$desktop" == armadaos ]]; then
     install -d -m 0755 "$rootfs/home/$username/.config"
     cat > "$rootfs/home/$username/.config/kwinrc" <<'EOF'
 [Compositing]

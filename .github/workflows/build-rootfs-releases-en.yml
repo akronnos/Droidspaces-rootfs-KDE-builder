@@ -34,6 +34,7 @@ on:
           - KDE
           - KDE mobile
           - GNOME
+          - ArmadaOS
       desktop_autostart:
         description: Start desktop on boot
         required: true

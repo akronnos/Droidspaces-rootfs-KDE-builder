@@ -6,6 +6,7 @@ desktop_normalize() {
         KDE|kde) printf '%s\n' kde ;;
         'KDE mobile'|kde-mobile) printf '%s\n' kde-mobile ;;
         GNOME|gnome) printf '%s\n' gnome ;;
+        ArmadaOS|armadaos) printf '%s\n' armadaos ;;
         *) return 1 ;;
     esac
 }
@@ -16,6 +17,7 @@ desktop_label() {
         kde) printf '%s\n' KDE ;;
         kde-mobile) printf '%s\n' 'KDE mobile' ;;
         gnome) printf '%s\n' GNOME ;;
+        armadaos) printf '%s\n' ArmadaOS ;;
         *) return 1 ;;
     esac
 }
@@ -62,6 +64,12 @@ desktop_target_supported() {
                 *) return 1 ;;
             esac
             ;;
+        armadaos)
+            case "$target" in
+                ArmadaOS) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
         *) return 1 ;;
     esac
 }
@@ -83,6 +91,12 @@ desktop_backend_supported() {
         gnome:anland-wayland)
             case "$target" in
                 Debian-13|Ubuntu-26) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        armadaos:anland-wayland)
+            case "$target" in
+                ArmadaOS) return 0 ;;
                 *) return 1 ;;
             esac
             ;;

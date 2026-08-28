@@ -11,6 +11,24 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
     kde:anland-wayland) command_line='exec startplasma-wayland' ;;
     kde-mobile:anland-wayland) command_line='exec startplasmamobile' ;;
     gnome:anland-wayland) command_line='exec gnome-session --session=gnome' ;;
+    armadaos:anland-wayland)
+        state_file="/var/home/armada/.config/armada-session-state"
+        command_line="
+        if [ ! -f \"$state_file\" ]; then
+            mkdir -p \"\$(dirname \"$state_file\")\"
+            echo \"gamemode\" > \"$state_file\"
+            chown armada:armada \"\$(dirname \"$state_file\")\" \"$state_file\" 2>/dev/null || true
+        fi
+        while true; do
+            state=\$(cat \"$state_file\" 2>/dev/null || echo \"gamemode\")
+            if [ \"\$state\" = \"desktop\" ]; then
+                startplasma-wayland
+            else
+                gamescope-session-steam
+            fi
+            sleep 1
+        done"
+        ;;
     *)
         echo "不支持的桌面会话：${DESKTOP:-未设置}/${DISPLAY_BACKEND:-未设置}" >&2
         exit 1

@@ -408,25 +408,25 @@ COPY --from=jupiter-hw-support /rpms /tmp/packages/jupiter-hw-support
 
 COPY scripts/armada/ /tmp/armada-scripts/
 
-RUN dnf install -y --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release && \
-    dnf install -y --nogpgcheck --setopt=install_weak_deps=False --setopt=terra.repo_gpgcheck=0 --skip-unavailable \
-    /tmp/packages/mangohud/mangohud-*.fc44.armada.*.rpm \
-    /tmp/packages/gamescope/terra-gamescope{,-libs}-[0-9]*.aarch64.rpm \
-    steam-devices vulkan-loader vulkan-tools gamemode gtk2 openal-soft xorg-x11-server-Xwayland xorg-x11-server-Xvfb \
-    /tmp/packages/inputplumber/inputplumber-*.rpm \
-    /tmp/packages/jupiter-hw-support/*.rpm \
-    steam-notif-daemon \
-    /tmp/packages/gamescope-session/gamescope-session-*.rpm \
-    /tmp/packages/gamescope-session-steam/gamescope-session-steam-*.rpm \
-    erofs-fuse erofs-utils fuse-libs lsb_release squashfuse squashfs-tools \
-    /tmp/packages/fex/fex-emu-*.rpm
-
-RUN mkdir -p /usr/share/fex-emu/RootFS && \
-    curl --retry 3 --retry-delay 2 -fsSL -o /usr/share/fex-emu/RootFS/ArchLinux.sqsh "https://rootfs.fex-emu.gg/ArchLinux/2026-08-11/ArchLinux.sqsh" && \
-    echo "5d0c1a38590c68e5c2597c2c8a26d2f80170b1b738c857d63e1cdadada5f5f2a  /usr/share/fex-emu/RootFS/ArchLinux.sqsh" | sha256sum -c - && \
-    unsquashfs -cat /usr/share/fex-emu/RootFS/ArchLinux.sqsh graphics_provider.json | python3 -m json.tool >/dev/null && \
-    mkdir -p /usr/share/guestos/fex-mesa && \
-    cat <<'EOF' > /usr/share/fex-emu/Config.json
+RUN if [ "$DESKTOP" = "armadaos" ]; then \
+        dnf install -y --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release && \
+        dnf install -y --nogpgcheck --setopt=install_weak_deps=False --setopt=terra.repo_gpgcheck=0 --skip-unavailable \
+        /tmp/packages/mangohud/mangohud-*.fc44.armada.*.rpm \
+        /tmp/packages/gamescope/terra-gamescope{,-libs}-[0-9]*.aarch64.rpm \
+        steam-devices vulkan-loader vulkan-tools gamemode gtk2 openal-soft xorg-x11-server-Xwayland xorg-x11-server-Xvfb \
+        /tmp/packages/inputplumber/inputplumber-*.rpm \
+        /tmp/packages/jupiter-hw-support/*.rpm \
+        steam-notif-daemon \
+        /tmp/packages/gamescope-session/gamescope-session-*.rpm \
+        /tmp/packages/gamescope-session-steam/gamescope-session-steam-*.rpm \
+        erofs-fuse erofs-utils fuse-libs lsb_release squashfuse squashfs-tools \
+        /tmp/packages/fex/fex-emu-*.rpm && \
+        mkdir -p /usr/share/fex-emu/RootFS && \
+        curl --retry 3 --retry-delay 2 -fsSL -o /usr/share/fex-emu/RootFS/ArchLinux.sqsh "https://rootfs.fex-emu.gg/ArchLinux/2026-08-11/ArchLinux.sqsh" && \
+        echo "5d0c1a38590c68e5c2597c2c8a26d2f80170b1b738c857d63e1cdadada5f5f2a  /usr/share/fex-emu/RootFS/ArchLinux.sqsh" | sha256sum -c - && \
+        unsquashfs -cat /usr/share/fex-emu/RootFS/ArchLinux.sqsh graphics_provider.json | python3 -m json.tool >/dev/null && \
+        mkdir -p /usr/share/guestos/fex-mesa && \
+        cat <<'EOF' > /usr/share/fex-emu/Config.json
 {
   "Config": {
     "RootFS": "/usr/share/guestos/fex-mesa",
@@ -448,27 +448,29 @@ RUN mkdir -p /usr/share/fex-emu/RootFS && \
   }
 }
 EOF
-
-# Steam Bootstrap & Proton
-RUN STEAM_BOOTSTRAP_HOME=/var/home/armada bash /tmp/armada-scripts/generate-steam-bootstrap.sh && \
-    rm -f /etc/steamos-oobe-image && \
-    PROTON_VER="11.0-20260703-slr" && \
-    PROTON_ARCHIVE_NAME="proton-cachyos-${PROTON_VER}-arm64" && \
-    PROTON_TOOL_NAME="proton-cachyos-11.0-arm64" && \
-    PROTON_TAR="${PROTON_ARCHIVE_NAME}.tar.xz" && \
-    curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_TAR}" "https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_TAR}" && \
-    curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" "https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_ARCHIVE_NAME}.sha512sum" && \
-    cd /tmp && sha512sum -c "${PROTON_ARCHIVE_NAME}.sha512sum" && \
-    PROTON_DIR="/usr/share/steam/compatibilitytools.d" && \
-    mkdir -p "${PROTON_DIR}" && \
-    tar -xJf "/tmp/${PROTON_TAR}" -C "${PROTON_DIR}/" && \
-    rm -rf "${PROTON_DIR:?}/${PROTON_TOOL_NAME}" && \
-    mv "${PROTON_DIR}/${PROTON_ARCHIVE_NAME}" "${PROTON_DIR}/${PROTON_TOOL_NAME}" && \
-    sed -i '/require_tool_appid/d' "${PROTON_DIR}/${PROTON_TOOL_NAME}/toolmanifest.vdf" && \
-    python3 /tmp/armada-scripts/patch-proton-cachyos-dxvk-probe.py "${PROTON_DIR}/${PROTON_TOOL_NAME}/proton" && \
-    python3 /tmp/armada-scripts/set-steam-default-compat.py "/var/home/armada/.local/share/Steam" "${PROTON_TOOL_NAME}" "${PROTON_DIR}" && \
-    rm -f "/tmp/${PROTON_TAR}" "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" && \
-    rm -rf /tmp/packages /tmp/armada-scripts
+        STEAM_BOOTSTRAP_HOME=/var/home/armada bash /tmp/armada-scripts/generate-steam-bootstrap.sh && \
+        rm -f /etc/steamos-oobe-image && \
+        PROTON_VER="11.0-20260703-slr" && \
+        PROTON_ARCHIVE_NAME="proton-cachyos-${PROTON_VER}-arm64" && \
+        PROTON_TOOL_NAME="proton-cachyos-11.0-arm64" && \
+        PROTON_TAR="${PROTON_ARCHIVE_NAME}.tar.xz" && \
+        curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_TAR}" "https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_TAR}" && \
+        curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" "https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_ARCHIVE_NAME}.sha512sum" && \
+        cd /tmp && sha512sum -c "${PROTON_ARCHIVE_NAME}.sha512sum" && \
+        PROTON_DIR="/usr/share/steam/compatibilitytools.d" && \
+        mkdir -p "${PROTON_DIR}" && \
+        tar -xJf "/tmp/${PROTON_TAR}" -C "${PROTON_DIR}/" && \
+        rm -rf "${PROTON_DIR:?}/${PROTON_TOOL_NAME}" && \
+        mv "${PROTON_DIR}/${PROTON_ARCHIVE_NAME}" "${PROTON_DIR}/${PROTON_TOOL_NAME}" && \
+        sed -i '/require_tool_appid/d' "${PROTON_DIR}/${PROTON_TOOL_NAME}/toolmanifest.vdf" && \
+        python3 /tmp/armada-scripts/patch-proton-cachyos-dxvk-probe.py "${PROTON_DIR}/${PROTON_TOOL_NAME}/proton" && \
+        python3 /tmp/armada-scripts/set-steam-default-compat.py "/var/home/armada/.local/share/Steam" "${PROTON_TOOL_NAME}" "${PROTON_DIR}" && \
+        install -Dpm 0755 /tmp/armada-scripts/os-session-select /usr/libexec/os-session-select && \
+        install -Dpm 0755 /tmp/armada-scripts/session-control /usr/libexec/armada/session-control; \
+    else \
+        echo "--> [跳过] 非 ArmadaOS 桌面，不安装游戏组件"; \
+    fi && \
+    rm -rf /tmp/packages /tmp/armada-scripts /tmp/*.tar.xz /tmp/*.sha512sum
 
 # 最终清理 DNF 缓存以缩减镜像体积
 RUN dnf clean all && \

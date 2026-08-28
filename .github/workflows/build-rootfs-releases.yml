@@ -34,6 +34,7 @@ on:
           - KDE
           - KDE mobile
           - GNOME
+          - ArmadaOS
       desktop_autostart:
         description: 桌面开机自启动
         required: true
