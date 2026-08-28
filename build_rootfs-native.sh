@@ -34,7 +34,7 @@ while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
     t) ENABLE_8gen2_wayland="$OPTARG" ;; # 修复骁龙8 Gen 2 Wayland 花屏
     u) USERNAME="$OPTARG" ;; # 自定义用户名
     A) LEGACY_ANLAND_INPUT="$OPTARG" ;; # 兼容旧参数
-    *) echo "用法: $0 -i <template.Dockerfile> -K <none|KDE|'KDE mobile'|GNOME> [-B <x11|anland-wayland>]" ; exit 1 ;;
+    *) echo "用法: $0 -i <template.Dockerfile> -K <none|KDE|'KDE mobile'|GNOME|ArmadaOS> [-B <x11|anland-wayland>]" ; exit 1 ;;
   esac
 done
 
@@ -43,7 +43,7 @@ done
 : "${ANLAND_PACKAGE_REVISION:=}"
 
 if ! DESKTOP="$(desktop_normalize "${DESKTOP_INPUT:-}")"; then
-  echo "错误：-K 只支持 none、KDE、'KDE mobile' 或 GNOME。" >&2
+  echo "错误：-K 只支持 none、KDE、'KDE mobile'、GNOME 或 ArmadaOS。" >&2
   exit 1
 fi
 if [[ -n "${LEGACY_ANLAND_INPUT:-}" ]]; then
