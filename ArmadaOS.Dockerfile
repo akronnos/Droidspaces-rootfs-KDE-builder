@@ -408,7 +408,8 @@ COPY --from=jupiter-hw-support /rpms /tmp/packages/jupiter-hw-support
 
 COPY scripts/armada/ /tmp/armada-scripts/
 
-RUN dnf install -y --setopt=install_weak_deps=False \
+RUN dnf install -y --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release && \
+    dnf install -y --setopt=install_weak_deps=False \
     /tmp/packages/mangohud/mangohud-*.fc44.armada.*.rpm \
     /tmp/packages/gamescope/terra-gamescope{,-libs}-[0-9]*.aarch64.rpm \
     steam-devices vulkan-loader vulkan-tools gamemode gtk2 openal-soft xorg-x11-server-Xwayland xorg-x11-server-Xvfb \
@@ -424,9 +425,8 @@ RUN mkdir -p /usr/share/fex-emu/RootFS && \
     curl --retry 3 --retry-delay 2 -fsSL -o /usr/share/fex-emu/RootFS/ArchLinux.sqsh "https://rootfs.fex-emu.gg/ArchLinux/2026-08-11/ArchLinux.sqsh" && \
     echo "5d0c1a38590c68e5c2597c2c8a26d2f80170b1b738c857d63e1cdadada5f5f2a  /usr/share/fex-emu/RootFS/ArchLinux.sqsh" | sha256sum -c - && \
     unsquashfs -cat /usr/share/fex-emu/RootFS/ArchLinux.sqsh graphics_provider.json | python3 -m json.tool >/dev/null && \
-    mkdir -p /usr/share/guestos/fex-mesa
-
-COPY <<'EOF' /usr/share/fex-emu/Config.json
+    mkdir -p /usr/share/guestos/fex-mesa && \
+    cat <<'EOF' > /usr/share/fex-emu/Config.json
 {
   "Config": {
     "RootFS": "/usr/share/guestos/fex-mesa",
