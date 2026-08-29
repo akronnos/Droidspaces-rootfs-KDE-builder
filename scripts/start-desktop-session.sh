@@ -12,7 +12,7 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
     kde-mobile:anland-wayland) command_line='exec startplasmamobile' ;;
     gnome:anland-wayland) command_line='exec gnome-session --session=gnome' ;;
     armadaos:anland-wayland)
-        state_file="/var/home/armada/.config/armada-session-state"
+        state_file="$HOME/.config/armada-session-state"
         command_line="
         if [ ! -f \"$state_file\" ]; then
             mkdir -p \"\$(dirname \"$state_file\")\"
