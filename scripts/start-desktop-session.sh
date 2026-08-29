@@ -24,7 +24,7 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
             if [ \"\$state\" = \"desktop\" ]; then
                 startplasma-wayland
             else
-                gamescope-session-steam
+                gamescope-session-plus steam
             fi
             sleep 1
         done"
