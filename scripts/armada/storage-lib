@@ -1,0 +1,5 @@
+#!/bin/bash
+armada_internal_device() { return 1; }
+armada_root_device() { return 1; }
+armada_running_from_internal() { return 0; }
+armada_mounted_sd() { return 1; }

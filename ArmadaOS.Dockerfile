@@ -447,7 +447,9 @@ RUN if [ "$DESKTOP" = "armadaos" ]; then \
         install -Dpm 0755 /tmp/armada-scripts/os-session-select /usr/libexec/os-session-select && \
         install -Dpm 0755 /tmp/armada-scripts/session-control /usr/libexec/armada/session-control && \
         install -Dpm 0755 /tmp/armada-scripts/launch-steam /usr/libexec/armada/launch-steam && \
-        install -Dpm 0755 /tmp/armada-scripts/steam /usr/bin/steam; \
+        install -Dpm 0755 /tmp/armada-scripts/steam /usr/bin/steam && \
+        install -Dpm 0755 /tmp/armada-scripts/storage-lib /usr/lib/armada/storage-lib && \
+        mkdir -p /etc/armada && touch /etc/armada/splash-disabled; \
     else \
         echo "--> [跳过] 非 ArmadaOS 桌面，不安装游戏组件"; \
     fi && \
