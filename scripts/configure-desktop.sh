@@ -54,6 +54,9 @@ if [[ "$desktop" == armadaos ]]; then
     if [[ -d "$rootfs/var/home/armada/.local/share/Steam" ]]; then
         install -d -m 0755 "$rootfs/home/$username/.local/share"
         cp -a "$rootfs/var/home/armada/.local/share/Steam" "$rootfs/home/$username/.local/share/"
+        cp -a "$rootfs/var/home/armada/.steam" "$rootfs/home/$username/.steam" 2>/dev/null || true
+        cp -a "$rootfs/var/home/armada/.steampath" "$rootfs/home/$username/.steampath" 2>/dev/null || true
+        cp -a "$rootfs/var/home/armada/.steampid" "$rootfs/home/$username/.steampid" 2>/dev/null || true
         # We can also clean up the old one to save space
         rm -rf "$rootfs/var/home/armada"
     fi
