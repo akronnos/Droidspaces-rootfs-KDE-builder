@@ -24,7 +24,9 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
             if [ \"\$state\" = \"desktop\" ]; then
                 startplasma-wayland
             else
-                gamescope-session-plus steam
+                # Gamescope cannot run on Turnip/KGSL because it lacks a DRM fd for VK_EXT_physical_device_drm.
+                # We bypass it and run Steam's Gamepad UI directly on the Anland Wayland compositor.
+                /usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck
             fi
             sleep 1
         done"
