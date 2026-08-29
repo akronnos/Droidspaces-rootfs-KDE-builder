@@ -50,6 +50,15 @@ Enabled=false
 EOF
 fi
 
+if [[ "$desktop" == armadaos ]]; then
+    if [[ -d "$rootfs/var/home/armada/.local/share/Steam" ]]; then
+        install -d -m 0755 "$rootfs/home/$username/.local/share"
+        cp -a "$rootfs/var/home/armada/.local/share/Steam" "$rootfs/home/$username/.local/share/"
+        # We can also clean up the old one to save space
+        rm -rf "$rootfs/var/home/armada"
+    fi
+fi
+
 if [[ -z "$rootfs" ]]; then
     chown -R "$username:$username" "/home/$username"
 fi
