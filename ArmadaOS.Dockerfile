@@ -426,28 +426,7 @@ RUN if [ "$DESKTOP" = "armadaos" ]; then \
         echo "5d0c1a38590c68e5c2597c2c8a26d2f80170b1b738c857d63e1cdadada5f5f2a  /usr/share/fex-emu/RootFS/ArchLinux.sqsh" | sha256sum -c - && \
         unsquashfs -cat /usr/share/fex-emu/RootFS/ArchLinux.sqsh graphics_provider.json | python3 -m json.tool >/dev/null && \
         mkdir -p /usr/share/guestos/fex-mesa && \
-        cat <<'EOF' > /usr/share/fex-emu/Config.json
-{
-  "Config": {
-    "RootFS": "/usr/share/guestos/fex-mesa",
-    "TSOEnabled": "1",
-    "X87ReducedPrecision": "1",
-    "Multiblock": "0",
-    "VectorTSOEnabled": "0",
-    "MemcpySetTSOEnabled": "0",
-    "HalfBarrierTSOEnabled": "1",
-    "ThunkHostLibs": "/usr/lib64/fex-emu/HostThunks",
-    "ThunkGuestLibs": "/usr/share/fex-emu/GuestThunks"
-  },
-  "ThunksDB": {
-    "Vulkan": 1,
-    "GL": 1,
-    "drm": 1,
-    "WaylandClient": 1,
-    "asound": 1
-  }
-}
-EOF
+        echo '{"Config":{"RootFS":"/usr/share/guestos/fex-mesa","TSOEnabled":"1","X87ReducedPrecision":"1","Multiblock":"0","VectorTSOEnabled":"0","MemcpySetTSOEnabled":"0","HalfBarrierTSOEnabled":"1","ThunkHostLibs":"/usr/lib64/fex-emu/HostThunks","ThunkGuestLibs":"/usr/share/fex-emu/GuestThunks"},"ThunksDB":{"Vulkan":1,"GL":1,"drm":1,"WaylandClient":1,"asound":1}}' > /usr/share/fex-emu/Config.json && \
         STEAM_BOOTSTRAP_HOME=/var/home/armada bash /tmp/armada-scripts/generate-steam-bootstrap.sh && \
         rm -f /etc/steamos-oobe-image && \
         PROTON_VER="11.0-20260703-slr" && \
@@ -466,7 +445,9 @@ EOF
         python3 /tmp/armada-scripts/patch-proton-cachyos-dxvk-probe.py "${PROTON_DIR}/${PROTON_TOOL_NAME}/proton" && \
         python3 /tmp/armada-scripts/set-steam-default-compat.py "/var/home/armada/.local/share/Steam" "${PROTON_TOOL_NAME}" "${PROTON_DIR}" && \
         install -Dpm 0755 /tmp/armada-scripts/os-session-select /usr/libexec/os-session-select && \
-        install -Dpm 0755 /tmp/armada-scripts/session-control /usr/libexec/armada/session-control; \
+        install -Dpm 0755 /tmp/armada-scripts/session-control /usr/libexec/armada/session-control && \
+        install -Dpm 0755 /tmp/armada-scripts/launch-steam /usr/libexec/armada/launch-steam && \
+        install -Dpm 0755 /tmp/armada-scripts/steam /usr/bin/steam; \
     else \
         echo "--> [跳过] 非 ArmadaOS 桌面，不安装游戏组件"; \
     fi && \
