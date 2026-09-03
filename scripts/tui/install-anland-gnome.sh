@@ -4,8 +4,8 @@ set -euo pipefail
 # The package archives are deliberately kept out of Git. Override the
 # repository when installing packages published by a fork.
 readonly DEFAULT_REPOSITORY="Goldzxcbug/droidspaces-package"
-readonly RELEASE_REPOSITORY="${ANLAND_RELEASE_REPOSITORY:-${ANLAND_GNOME_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}}"
-RELEASE_TAG="${ANLAND_RELEASE_TAG:-${ANLAND_GNOME_RELEASE_TAG:-}}"
+readonly RELEASE_REPOSITORY="${ANLAND_GNOME_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}"
+RELEASE_TAG="${ANLAND_GNOME_RELEASE_TAG:-}"
 readonly ROLLING_RELEASE_TAG="anland-gnome-packages"
 readonly MANIFEST_NAME="anland-gnome-manifest"
 readonly MAX_ARCHIVE_BYTES=$((512 * 1024 * 1024))
@@ -14,8 +14,9 @@ readonly SOURCE_PROBE_TIMEOUT_SECONDS=2
 readonly GITHUB_RELEASE_URL="https://github.com"
 readonly GITHUB_API_URL="https://api.github.com"
 readonly GH_PROXY_RELEASE_URL="https://gh-proxy.com/https://github.com"
-readonly GHPROXY_NET_RELEASE_URL="https://ghproxy.net/https://github.com"
+readonly CNB_RELEASE_URL="https://cnb.cool"
 readonly APT_HOLD_STATE="/var/lib/anland-gnome/apt-holds"
+readonly COMPONENT_STATE_DIR="/var/lib/droidspaces-tui/components"
 
 WORK_DIR=""
 PREPARED_WORK_DIR="${ANLAND_GNOME_WORK_DIR:-}"
@@ -32,6 +33,7 @@ SKIP_SOURCE_PROBE=false
 EXPECTED_MANIFEST_SHA256=""
 EXPECTED_ARCHIVE_SHA256=""
 OFFICIAL_RELEASE_METADATA=""
+UNINSTALL=false
 
 detect_language() {
     local locale_name="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
@@ -51,6 +53,26 @@ msg() {
 
 log() {
     printf '[anland-gnome] %s\n' "$(msg "$1" "$2")"
+}
+
+record_component_version() {
+    local version="$1" state_file="$COMPONENT_STATE_DIR/gnome.version" temporary_file
+    [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,63}$ ]] || return 0
+    if ! mkdir -p -- "$COMPONENT_STATE_DIR"; then
+        log "无法记录已安装的 Mutter 版本。" "Could not record the installed Mutter version."
+        return 0
+    fi
+    temporary_file="$(mktemp "$state_file.tmp.XXXXXXXX")" || {
+        log "无法记录已安装的 Mutter 版本。" "Could not record the installed Mutter version."
+        return 0
+    }
+    if printf '%s\n' "$version" > "$temporary_file" && \
+        chmod 0644 "$temporary_file" && mv -f -- "$temporary_file" "$state_file"; then
+        return 0
+    fi
+    rm -f -- "$temporary_file" || true
+    log "无法记录已安装的 Mutter 版本。" "Could not record the installed Mutter version."
+    return 0
 }
 
 die() {
@@ -75,12 +97,47 @@ parse_arguments() {
                 DOWNLOAD_SOURCE="3"
                 SKIP_SOURCE_PROBE=true
                 ;;
+            --uninstall)
+                UNINSTALL=true
+                ;;
             *)
-                die "不支持的参数：${argument}。可用参数为 -1/--1、-2/--2、-3/--3。" \
-                    "Unsupported argument: ${argument}. Valid arguments are -1/--1, -2/--2, and -3/--3."
+                die "不支持的参数：${argument}。可用参数为 -1/--1、-2/--2、-3/--3、--uninstall。" \
+                    "Unsupported argument: ${argument}. Valid arguments are -1/--1, -2/--2, -3/--3, and --uninstall."
                 ;;
         esac
     done
+}
+
+uninstall_gnome() {
+    local package candidate
+    local -a packages=() package_specs=()
+    [[ -s "$APT_HOLD_STATE" ]] || {
+        rm -f -- "$COMPONENT_STATE_DIR/gnome.version"
+        log "没有 Anland GNOME 安装记录。" "No Anland GNOME installation record was found."
+        return 0
+    }
+    command -v apt-cache >/dev/null 2>&1 || die "未找到 apt-cache。" "apt-cache was not found."
+    command -v apt-get >/dev/null 2>&1 || die "未找到 apt-get。" "apt-get was not found."
+    command -v apt-mark >/dev/null 2>&1 || die "未找到 apt-mark。" "apt-mark was not found."
+    mapfile -t packages < <(sed -nE 's/^([a-z0-9][a-z0-9+.-]*)$/\1/p' "$APT_HOLD_STATE" | sort -u)
+    ((${#packages[@]} > 0)) || die "APT hold 清单为空。" "The APT hold list is empty."
+    for package in "${packages[@]}"; do
+        candidate="$(apt-cache madison "$package" | awk -F '|' 'NR == 1 {
+            value = $2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            print value
+        }')"
+        [[ -n "$candidate" ]] || \
+            die "找不到 $package 的官方候选版本。" "No distribution candidate was found for $package."
+        package_specs+=("$package=$candidate")
+    done
+    apt-mark unhold "${packages[@]}" >/dev/null
+    apt-get install -y --reinstall --allow-downgrades --allow-change-held-packages \
+        "${package_specs[@]}"
+    rm -f -- "$APT_HOLD_STATE" "$COMPONENT_STATE_DIR/gnome.version"
+    rmdir -- "${APT_HOLD_STATE%/*}" 2>/dev/null || true
+    log "Anland GNOME 已卸载，发行版 Mutter/Xwayland 已恢复。" \
+        "Anland GNOME was uninstalled and distribution Mutter/Xwayland packages were restored."
 }
 
 cleanup() {
@@ -101,8 +158,8 @@ require_root() {
     [[ "$script_path" = /* ]] || script_path="$PWD/$script_path"
     local status
     if sudo env \
-        "ANLAND_RELEASE_REPOSITORY=$RELEASE_REPOSITORY" \
-        "ANLAND_RELEASE_TAG=$RELEASE_TAG" \
+        "ANLAND_GNOME_RELEASE_REPOSITORY=$RELEASE_REPOSITORY" \
+        "ANLAND_GNOME_RELEASE_TAG=$RELEASE_TAG" \
         "ANLAND_GNOME_WORK_DIR=$WORK_DIR" \
         "ANLAND_GNOME_PACKAGE_DIR=$PACKAGE_DIR" \
         bash "$script_path" "$@"; then
@@ -304,38 +361,41 @@ resolve_official_archive_sha256() {
 }
 
 release_download_base() {
-    local source_url
-
     case "$DOWNLOAD_SOURCE" in
-        1) source_url="$GITHUB_RELEASE_URL" ;;
-        2) source_url="$GH_PROXY_RELEASE_URL" ;;
-        3) source_url="$GHPROXY_NET_RELEASE_URL" ;;
+        1) printf '%s/%s/releases/download/%s' "$GITHUB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
+        2) printf '%s/%s/releases/download/%s' "$GH_PROXY_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
+        3) printf '%s/%s/-/releases/download/%s' "$CNB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
         *) die "下载源选择无效。" "The selected download source is invalid." ;;
     esac
-    printf '%s/%s/releases/download/%s' "$source_url" "$RELEASE_REPOSITORY" "$RELEASE_TAG"
 }
 
 download_source_name() {
     case "$1" in
         1) printf 'GitHub' ;;
         2) printf 'gh-proxy.com' ;;
-        3) printf 'ghproxy.net' ;;
+        3) printf 'CNB' ;;
         *) return 1 ;;
     esac
 }
 
 download_source_probe_url() {
     local source="$1"
-    local source_url
 
     case "$source" in
-        1) source_url="$GITHUB_RELEASE_URL" ;;
-        2) source_url="$GH_PROXY_RELEASE_URL" ;;
-        3) source_url="$GHPROXY_NET_RELEASE_URL" ;;
+        1)
+            printf '%s/%s/releases/download/%s/%s' \
+                "$GITHUB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
+        2)
+            printf '%s/%s/releases/download/%s/%s' \
+                "$GH_PROXY_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
+        3)
+            printf '%s/%s/-/releases/download/%s/%s' \
+                "$CNB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
         *) return 1 ;;
     esac
-    printf '%s/%s/releases/download/%s/%s' \
-        "$source_url" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
 }
 
 format_latency() {
@@ -398,7 +458,7 @@ probe_download_source() {
 }
 
 select_download_source() {
-    local source latency choice
+    local source latency choice recommendation
 
     if [[ "$SKIP_SOURCE_PROBE" == true ]]; then
         log "已按参数选择 $(download_source_name "$DOWNLOAD_SOURCE")，跳过延迟测试。" \
@@ -410,8 +470,12 @@ select_download_source() {
         "Testing download-source latency (timeouts at ${SOURCE_PROBE_TIMEOUT_SECONDS} seconds)..."
     for source in 1 2 3; do
         latency="$(probe_download_source "$source")"
-        printf '%s. %s %s: %s\n' "$source" "$(download_source_name "$source")" \
-            "$(msg '延迟' 'latency')" "$latency"
+        recommendation=""
+        if [[ "$source" == "3" ]]; then
+            recommendation="$(msg '（推荐）' ' (recommended)')"
+        fi
+        printf '%s. %s%s %s: %s\n' "$source" "$(download_source_name "$source")" \
+            "$recommendation" "$(msg '延迟' 'latency')" "$latency"
     done
 
     while :; do
@@ -640,34 +704,22 @@ write_apt_hold_state() {
 }
 
 install_deb_packages() {
-    local -a archive_files files packages skipped_packages
+    local -a files packages
     local file package
 
     command -v apt-get >/dev/null 2>&1 || die "未找到 apt-get。" "apt-get was not found."
     command -v dpkg-deb >/dev/null 2>&1 || die "未找到 dpkg-deb。" "dpkg-deb was not found."
-    mapfile -t archive_files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
-    for file in "${archive_files[@]}"; do
-        package="$(dpkg-deb -f "$file" Package)"
-        case "$package" in
-            libmutter-test-*|mutter-*-tests|mutter-tests|mutter-dev-bin|mutter-doc)
-                skipped_packages+=("$package")
-                continue
-                ;;
-        esac
-        [[ -n "$package" ]] || die "无法读取 deb 包名。" "Could not determine a deb package name."
-        files+=("$file")
-        packages+=("$package")
-    done
+    mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
     ((${#files[@]} > 0)) || die "没有可安装的 deb 包。" "No installable deb packages were found."
 
-    if ((${#skipped_packages[@]} > 0)); then
-        log "跳过非运行时包：${skipped_packages[*]}。" \
-            "Skipping non-runtime packages: ${skipped_packages[*]}."
-    fi
     log "正在安装 ${#files[@]} 个 deb 包并自动处理依赖..." \
         "Installing ${#files[@]} deb packages and resolving dependencies..."
     apt-get install -y --allow-downgrades --allow-change-held-packages "${files[@]}"
 
+    for file in "${files[@]}"; do
+        package="$(dpkg-deb -f "$file" Package)"
+        [[ -n "$package" ]] && packages+=("$package")
+    done
     mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
     ((${#packages[@]} > 0)) || die "无法读取 deb 包名。" "Could not determine the deb package names."
 
@@ -679,10 +731,16 @@ install_deb_packages() {
 }
 
 main() {
+    local archive_version
     detect_language
     parse_arguments "$@"
     detect_target
     check_architecture
+    if [[ "$UNINSTALL" == true ]]; then
+        require_root "$@"
+        uninstall_gnome
+        return
+    fi
     require_runtime_dependencies
     resolve_release_tag
     if [[ -n "$PREPARED_WORK_DIR" || -n "$PREPARED_PACKAGE_DIR" ]]; then
@@ -695,8 +753,13 @@ main() {
 
     install_deb_packages
 
+    archive_version="${ARCHIVE_NAME#"$ARCHIVE_PREFIX"}"
+    archive_version="${archive_version%"$ARCHIVE_SUFFIX"}"
+    record_component_version "$archive_version"
     log "安装完成，patched Mutter/Xwayland 已锁定。" \
         "Installation complete; patched Mutter/Xwayland packages are now locked."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

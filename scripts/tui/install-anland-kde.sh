@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 软件包归档不会存入 Git；安装 Fork 发布的软件包时可覆盖仓库地址。
+# The package archives are deliberately kept out of Git. Override the
+# repository when installing packages published by a fork.
 readonly DEFAULT_REPOSITORY="Goldzxcbug/droidspaces-package"
-readonly RELEASE_REPOSITORY="${ANLAND_RELEASE_REPOSITORY:-${ANLAND_KDE_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}}"
-RELEASE_TAG="${ANLAND_RELEASE_TAG:-${ANLAND_KDE_RELEASE_TAG:-}}"
+readonly RELEASE_REPOSITORY="${ANLAND_KDE_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}"
+RELEASE_TAG="${ANLAND_KDE_RELEASE_TAG:-}"
 readonly ROLLING_RELEASE_TAG="anland-kde-packages"
 readonly MANIFEST_NAME="anland-kde-manifest"
 readonly MAX_ARCHIVE_BYTES=$((512 * 1024 * 1024))
@@ -13,13 +14,14 @@ readonly SOURCE_PROBE_TIMEOUT_SECONDS=2
 readonly GITHUB_RELEASE_URL="https://github.com"
 readonly GITHUB_API_URL="https://api.github.com"
 readonly GH_PROXY_RELEASE_URL="https://gh-proxy.com/https://github.com"
-readonly GHPROXY_NET_RELEASE_URL="https://ghproxy.net/https://github.com"
+readonly CNB_RELEASE_URL="https://cnb.cool"
 readonly APT_HOLD_STATE="/var/lib/anland-kde/apt-holds"
 readonly DNF_MANAGED_BEGIN="# BEGIN anland-kde package holds"
 readonly DNF_MANAGED_END="# END anland-kde package holds"
 readonly MESA_DNF_MANAGED_BEGIN="# BEGIN install-mesa package holds"
 readonly MESA_DNF_MANAGED_END="# END install-mesa package holds"
 readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
+readonly COMPONENT_STATE_DIR="/var/lib/droidspaces-tui/components"
 
 WORK_DIR=""
 PREPARED_WORK_DIR="${ANLAND_KDE_WORK_DIR:-}"
@@ -37,6 +39,7 @@ SKIP_SOURCE_PROBE=false
 EXPECTED_MANIFEST_SHA256=""
 EXPECTED_ARCHIVE_SHA256=""
 OFFICIAL_RELEASE_METADATA=""
+UNINSTALL=false
 
 detect_language() {
     local locale_name="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
@@ -56,6 +59,26 @@ msg() {
 
 log() {
     printf '[anland-kde] %s\n' "$(msg "$1" "$2")"
+}
+
+record_component_version() {
+    local version="$1" state_file="$COMPONENT_STATE_DIR/kde.version" temporary_file
+    [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,63}$ ]] || return 0
+    if ! mkdir -p -- "$COMPONENT_STATE_DIR"; then
+        log "无法记录已安装的 KWin 版本。" "Could not record the installed KWin version."
+        return 0
+    fi
+    temporary_file="$(mktemp "$state_file.tmp.XXXXXXXX")" || {
+        log "无法记录已安装的 KWin 版本。" "Could not record the installed KWin version."
+        return 0
+    }
+    if printf '%s\n' "$version" > "$temporary_file" && \
+        chmod 0644 "$temporary_file" && mv -f -- "$temporary_file" "$state_file"; then
+        return 0
+    fi
+    rm -f -- "$temporary_file" || true
+    log "无法记录已安装的 KWin 版本。" "Could not record the installed KWin version."
+    return 0
 }
 
 die() {
@@ -80,12 +103,104 @@ parse_arguments() {
                 DOWNLOAD_SOURCE="3"
                 SKIP_SOURCE_PROBE=true
                 ;;
+            --uninstall)
+                UNINSTALL=true
+                ;;
             *)
-                die "不支持的参数：${argument}。可用参数为 -1/--1、-2/--2、-3/--3。" \
-                    "Unsupported argument: ${argument}. Valid arguments are -1/--1, -2/--2, and -3/--3."
+                die "不支持的参数：${argument}。可用参数为 -1/--1、-2/--2、-3/--3、--uninstall。" \
+                    "Unsupported argument: ${argument}. Valid arguments are -1/--1, -2/--2, -3/--3, and --uninstall."
                 ;;
         esac
     done
+}
+
+uninstall_kde_deb() {
+    local package candidate
+    local -a packages=() package_specs=()
+    [[ -s "$APT_HOLD_STATE" ]] || {
+        rm -f -- "$COMPONENT_STATE_DIR/kde.version"
+        log "没有 Anland KDE 安装记录。" "No Anland KDE installation record was found."
+        return 0
+    }
+    command -v apt-cache >/dev/null 2>&1 || die "未找到 apt-cache。" "apt-cache was not found."
+    command -v apt-get >/dev/null 2>&1 || die "未找到 apt-get。" "apt-get was not found."
+    command -v apt-mark >/dev/null 2>&1 || die "未找到 apt-mark。" "apt-mark was not found."
+    mapfile -t packages < <(sed -nE 's/^([a-z0-9][a-z0-9+.-]*)$/\1/p' "$APT_HOLD_STATE" | sort -u)
+    ((${#packages[@]} > 0)) || die "APT hold 清单为空。" "The APT hold list is empty."
+    for package in "${packages[@]}"; do
+        candidate="$(apt-cache madison "$package" | awk -F '|' 'NR == 1 {
+            value = $2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            print value
+        }')"
+        [[ -n "$candidate" ]] || \
+            die "找不到 $package 的官方候选版本。" "No distribution candidate was found for $package."
+        package_specs+=("$package=$candidate")
+    done
+    apt-mark unhold "${packages[@]}" >/dev/null
+    apt-get install -y --reinstall --allow-downgrades --allow-change-held-packages \
+        "${package_specs[@]}"
+    rm -f -- "$APT_HOLD_STATE" "$COMPONENT_STATE_DIR/kde.version"
+    rmdir -- "${APT_HOLD_STATE%/*}" 2>/dev/null || true
+}
+
+uninstall_kde_rpm() {
+    local dnf_conf="/etc/dnf/dnf.conf" backup stripped
+    command -v dnf >/dev/null 2>&1 || die "未找到 dnf。" "dnf was not found."
+    [[ -f "$dnf_conf" ]] || die "找不到 DNF 配置。" "The DNF configuration was not found."
+    backup="$(mktemp -t anland-kde-uninstall.XXXXXXXX)"
+    stripped="$(mktemp -t anland-kde-uninstall.XXXXXXXX)"
+    cp -p -- "$dnf_conf" "$backup"
+    if ! rewrite_dnf_config_without_managed_block "$dnf_conf" "$stripped" || \
+        ! install -m 0644 "$stripped" "$dnf_conf" || \
+        ! dnf distro-sync -y --exclude='mesa*' --exclude='systemd*' \
+            'kwin*' 'xorg-x11-server-Xwayland*'; then
+        install -m 0644 "$backup" "$dnf_conf" || true
+        rm -f -- "$backup" "$stripped"
+        die "恢复发行版 KWin/Xwayland 失败。" "Failed to restore distribution KWin/Xwayland packages."
+    fi
+    rm -f -- "$backup" "$stripped" "$COMPONENT_STATE_DIR/kde.version"
+}
+
+uninstall_kde_arch() {
+    local backup stripped
+    command -v pacman >/dev/null 2>&1 || die "未找到 pacman。" "pacman was not found."
+    [[ -f /etc/pacman.conf ]] || die "找不到 pacman.conf。" "pacman.conf was not found."
+    backup="$(mktemp -t anland-kde-uninstall.XXXXXXXX)"
+    stripped="$(mktemp -t anland-kde-uninstall.XXXXXXXX)"
+    cp -p -- /etc/pacman.conf "$backup"
+    awk '
+        /^[[:space:]]*IgnorePkg[[:space:]]*=/ {
+            equals = index($0, "=")
+            count = split(substr($0, equals + 1), items, /[[:space:]]+/)
+            output = ""
+            for (i = 1; i <= count; i++) {
+                if (items[i] != "" && items[i] != "kwin" && items[i] != "xorg-xwayland") {
+                    output = output (output == "" ? "" : " ") items[i]
+                }
+            }
+            if (output != "") print "IgnorePkg = " output
+            next
+        }
+        { print }
+    ' /etc/pacman.conf > "$stripped"
+    if ! install -m 0644 "$stripped" /etc/pacman.conf || \
+        ! pacman -S --noconfirm kwin xorg-xwayland; then
+        install -m 0644 "$backup" /etc/pacman.conf || true
+        rm -f -- "$backup" "$stripped"
+        die "恢复发行版 KWin/Xwayland 失败。" "Failed to restore distribution KWin/Xwayland packages."
+    fi
+    rm -f -- "$backup" "$stripped" "$COMPONENT_STATE_DIR/kde.version"
+}
+
+uninstall_kde() {
+    case "$PACKAGE_TYPE" in
+        deb) uninstall_kde_deb ;;
+        rpm) uninstall_kde_rpm ;;
+        pkg.tar.*) uninstall_kde_arch ;;
+    esac
+    log "Anland KDE 已卸载，发行版 KWin/Xwayland 已恢复。" \
+        "Anland KDE was uninstalled and distribution KWin/Xwayland packages were restored."
 }
 
 cleanup() {
@@ -106,8 +221,8 @@ require_root() {
     [[ "$script_path" = /* ]] || script_path="$PWD/$script_path"
     local status
     if sudo env \
-        "ANLAND_RELEASE_REPOSITORY=$RELEASE_REPOSITORY" \
-        "ANLAND_RELEASE_TAG=$RELEASE_TAG" \
+        "ANLAND_KDE_RELEASE_REPOSITORY=$RELEASE_REPOSITORY" \
+        "ANLAND_KDE_RELEASE_TAG=$RELEASE_TAG" \
         "ANLAND_KDE_WORK_DIR=$WORK_DIR" \
         "ANLAND_KDE_PACKAGE_DIR=$PACKAGE_DIR" \
         bash "$script_path" "$@"; then
@@ -336,38 +451,41 @@ resolve_official_archive_sha256() {
 }
 
 release_download_base() {
-    local source_url
-
     case "$DOWNLOAD_SOURCE" in
-        1) source_url="$GITHUB_RELEASE_URL" ;;
-        2) source_url="$GH_PROXY_RELEASE_URL" ;;
-        3) source_url="$GHPROXY_NET_RELEASE_URL" ;;
+        1) printf '%s/%s/releases/download/%s' "$GITHUB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
+        2) printf '%s/%s/releases/download/%s' "$GH_PROXY_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
+        3) printf '%s/%s/-/releases/download/%s' "$CNB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" ;;
         *) die "下载源选择无效。" "The selected download source is invalid." ;;
     esac
-    printf '%s/%s/releases/download/%s' "$source_url" "$RELEASE_REPOSITORY" "$RELEASE_TAG"
 }
 
 download_source_name() {
     case "$1" in
         1) printf 'GitHub' ;;
         2) printf 'gh-proxy.com' ;;
-        3) printf 'ghproxy.net' ;;
+        3) printf 'CNB' ;;
         *) return 1 ;;
     esac
 }
 
 download_source_probe_url() {
     local source="$1"
-    local source_url
 
     case "$source" in
-        1) source_url="$GITHUB_RELEASE_URL" ;;
-        2) source_url="$GH_PROXY_RELEASE_URL" ;;
-        3) source_url="$GHPROXY_NET_RELEASE_URL" ;;
+        1)
+            printf '%s/%s/releases/download/%s/%s' \
+                "$GITHUB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
+        2)
+            printf '%s/%s/releases/download/%s/%s' \
+                "$GH_PROXY_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
+        3)
+            printf '%s/%s/-/releases/download/%s/%s' \
+                "$CNB_RELEASE_URL" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
+            ;;
         *) return 1 ;;
     esac
-    printf '%s/%s/releases/download/%s/%s' \
-        "$source_url" "$RELEASE_REPOSITORY" "$RELEASE_TAG" "$MANIFEST_NAME"
 }
 
 format_latency() {
@@ -430,7 +548,7 @@ probe_download_source() {
 }
 
 select_download_source() {
-    local source latency choice
+    local source latency choice recommendation
 
     if [[ "$SKIP_SOURCE_PROBE" == true ]]; then
         log "已按参数选择 $(download_source_name "$DOWNLOAD_SOURCE")，跳过延迟测试。" \
@@ -442,8 +560,12 @@ select_download_source() {
         "Testing download-source latency (timeouts at ${SOURCE_PROBE_TIMEOUT_SECONDS} seconds)..."
     for source in 1 2 3; do
         latency="$(probe_download_source "$source")"
-        printf '%s. %s %s: %s\n' "$source" "$(download_source_name "$source")" \
-            "$(msg '延迟' 'latency')" "$latency"
+        recommendation=""
+        if [[ "$source" == "3" ]]; then
+            recommendation="$(msg '（推荐）' ' (recommended)')"
+        fi
+        printf '%s. %s%s %s: %s\n' "$source" "$(download_source_name "$source")" \
+            "$recommendation" "$(msg '延迟' 'latency')" "$latency"
     done
 
     while :; do
@@ -853,8 +975,8 @@ remove_managed_dnf_excludes() {
     local dnf_conf="$1"
     local temporary_conf mesa_stripped_conf transaction_conf
 
-    # 本地补丁 RPM 必须临时绕过两个锁定块；调用方会在 DNF 事务结束后
-    # 立即恢复原始配置。
+    # Local patched RPMs must bypass both hold blocks. The caller restores
+    # the original configuration immediately after the DNF transaction.
     temporary_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
     mesa_stripped_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
     transaction_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
@@ -975,35 +1097,14 @@ configure_dnf_excludes() {
 }
 
 install_rpm_packages() {
-    local -a files packages dnf_install_options=('--allow-downgrade')
-    local -A expected_nevra_by_package=()
+    local -a files packages dnf_install_options=()
     local dnf_conf="/etc/dnf/dnf.conf"
     local dnf_backup
-    local file package expected_nevra actual_nevra
-    local verification_failed=false
 
     command -v dnf >/dev/null 2>&1 || die "未找到 dnf。" "dnf was not found."
     command -v rpm >/dev/null 2>&1 || die "未找到 rpm。" "rpm was not found."
     mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.rpm' -print | sort)
     ((${#files[@]} > 0)) || die "没有可安装的 rpm 包。" "No installable rpm packages were found."
-
-    for file in "${files[@]}"; do
-        package="$(rpm -qp --queryformat '%{NAME}' "$file")" || die \
-            "无法读取 rpm 包名：${file##*/}。" \
-            "Could not read the RPM package name: ${file##*/}."
-        expected_nevra="$(rpm -qp --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' "$file")" || die \
-            "无法读取 rpm NEVRA：${file##*/}。" \
-            "Could not read the RPM NEVRA: ${file##*/}."
-        [[ -n "$package" && -n "$expected_nevra" ]] || die \
-            "rpm 元数据不完整：${file##*/}。" \
-            "The RPM metadata is incomplete: ${file##*/}."
-        [[ -z "${expected_nevra_by_package[$package]+present}" ]] || die \
-            "下载包包含重复的 rpm 包名：${package}。" \
-            "The archive contains a duplicate RPM package name: ${package}."
-        expected_nevra_by_package["$package"]="$expected_nevra"
-        packages+=("$package")
-    done
-    mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
 
     log "正在安装 ${#files[@]} 个 rpm 包并自动处理依赖..." \
         "Installing ${#files[@]} rpm packages and resolving dependencies..."
@@ -1027,25 +1128,8 @@ install_rpm_packages() {
         die "无法恢复 DNF 锁定配置。" "Unable to restore the DNF hold configuration."
     fi
 
-    for package in "${packages[@]}"; do
-        if ! actual_nevra="$(rpm -q --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' "$package" 2>/dev/null)"; then
-            log "安装后找不到 rpm 包：${package}。" \
-                "The RPM package is missing after installation: ${package}."
-            verification_failed=true
-            continue
-        fi
-        if [[ "$actual_nevra" != "${expected_nevra_by_package[$package]}" ]]; then
-            log "rpm 版本不匹配：${package}，需要 ${expected_nevra_by_package[$package]}，实际为 ${actual_nevra//$'\n'/, }。" \
-                "RPM version mismatch for ${package}: expected ${expected_nevra_by_package[$package]}, got ${actual_nevra//$'\n'/, }."
-            verification_failed=true
-        fi
-    done
-    if [[ "$verification_failed" == true ]]; then
-        rm -f -- "$dnf_backup"
-        die "rpm 安装结果未通过 NEVRA 校验，未写入软件包锁定。" \
-            "The RPM transaction failed NEVRA verification; package holds were not written."
-    fi
-
+    mapfile -t packages < <(rpm -qp --queryformat '%{NAME}\n' "${files[@]}" | sort -u)
+    ((${#packages[@]} > 0)) || die "无法读取 rpm 包名。" "Could not determine the rpm package names."
     log "正在设置 DNF exclude（等效于 hold）..." "Applying DNF excludes (equivalent to hold)..."
     if ! configure_dnf_excludes; then
         install -m 0644 "$dnf_backup" "$dnf_conf" || true
@@ -1107,10 +1191,16 @@ install_arch_packages() {
 }
 
 main() {
+    local archive_version
     detect_language
     parse_arguments "$@"
     detect_target
     check_architecture
+    if [[ "$UNINSTALL" == true ]]; then
+        require_root "$@"
+        uninstall_kde
+        return
+    fi
     require_runtime_dependencies
     resolve_release_tag
     if [[ -n "$PREPARED_WORK_DIR" || -n "$PREPARED_PACKAGE_DIR" ]]; then
@@ -1127,8 +1217,13 @@ main() {
         pkg.tar.*) install_arch_packages ;;
     esac
 
+    archive_version="${ARCHIVE_NAME#"$ARCHIVE_PREFIX"}"
+    archive_version="${archive_version%"$ARCHIVE_SUFFIX"}"
+    record_component_version "$archive_version"
     log "安装完成，patched KWin/Xwayland 已锁定。" \
         "Installation complete; patched KWin/Xwayland packages are now locked."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

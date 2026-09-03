@@ -41,13 +41,14 @@
 
 - 多发行版 RootFS 构建：支持 Debian、Ubuntu、Fedora 和 Arch。
 - 桌面选择：支持命令行 RootFS、KDE、KDE mobile 和 GNOME。
+- 统一维护 TUI：容器内运行 `droidspaces-tui`、`dstui` 或 `ds-tui`，可安装 Mesa、Hangover Wine、Wine 字体及 Anland KDE/GNOME 组件。
 - 桌面自动启动与故障恢复：X11、Plasma Wayland、Plasma Mobile 和 GNOME Wayland 使用统一的 systemd 服务模板，异常退出后会限频自动重启。
 - Termux:X11 桌面启动：X11 模式下默认使用 `DISPLAY=:5`。
 - PulseAudio 音频转发：支持 Unix socket、TCP 和关闭音频转发。
 - 中文环境：可选启用 `zh_CN.UTF-8` 和 `Asia/Shanghai` 时区。
 - 输入法：可选安装 Fcitx5；启用中文环境时会额外安装中文输入支持。
 - Snapdragon GPU 支持：集成来自 `mesa-for-android-container` 的高通 GPU 相关配置。
-- 全部七个发行版通过 `scripts/install-mesa.sh` 安装对应的 ARM64 Mesa 驱动及最新版 `droidspaces-media-decode` VA-API 驱动，并仅锁定相关 Mesa 包。KWin/Xwayland 与 Mutter/Xwayland 分别由 Anland KDE、GNOME 安装器锁定。镜像源选择、完整性校验和各发行版锁定机制见 [scripts 目录说明](scripts/README.md#mesa-安装器)。
+- 全部七个发行版通过 `scripts/tui/install-mesa.sh` 安装对应的 ARM64 Mesa 驱动及最新版 `droidspaces-media-decode` VA-API 驱动，并仅锁定相关 Mesa 包。KWin/Xwayland 与 Mutter/Xwayland 分别由 Anland KDE、GNOME 安装器锁定。镜像源选择、完整性校验和各发行版锁定机制见 [scripts 目录说明](scripts/README.md#mesa-安装器)。
 - 原生 ARM64 Google Chrome：全部桌面模式以 Chrome Stable 取代 Chromium；Debian/Ubuntu 和 Fedora 使用 Google 官方软件源，Arch 使用 AUR 的 ARM64 打包配方。
 
 - 骁龙 8 Gen 2 Wayland 花屏修复：可选将 Turnip UBWC 修复开关写入 RootFS 环境变量。
@@ -56,7 +57,7 @@
 - 开发工具：可选安装编译器、CMake、Python 开发环境等。
 - 压缩工具：可选安装 `zip`、`unzip`、`7z`、`xz`、`tar`、`gzip` 等工具。
 - Docker：可选在 RootFS 内安装 Docker 相关软件包。
-- 旧内核 systemd 兼容：可选在 systemd 主版本高于 257 的 apt、dnf 或 pacman 发行版中安装由包管理器管控的完整 systemd 257 包族；Debian 13 等已是 257 或更低版本时会自动跳过。
+- 旧内核 systemd 兼容：可选在 systemd 主版本高于 257 的 apt、dnf 或 pacman 发行版中安装由包管理器管控的完整 systemd 257 包族；只支持 `none` 和经过验证的普通 `KDE`，Debian 13 等已是 257 或更低版本时会自动跳过安装。
 - Wayland/Anland：通过独立的 [`droidspaces-package`](https://github.com/Goldzxcbug/droidspaces-package) 仓库提供 ARM64 patched KWin/Xwayland；GNOME 在 Debian 13、Ubuntu 26.04 上使用独立的 patched Mutter/Xwayland 包族。
 - USB 设备管理：全部发行版内置 Droidspaces USB Manager，支持 USB 存储、ADB 设备节点、挂载、卸载和系统托盘。
 - Release 自动发布：构建完成后会把 RootFS `.tar.xz` 上传到 GitHub Release。
@@ -78,7 +79,7 @@ GitHub Actions 的主要输入项如下：
 | 修复 8Gen2 Wayland 花屏 (`enable_8gen2_wayland`) | `true`、`false` | `false` | 为 Debian 13、Ubuntu 26、Fedora 43/44 和 Arch 写入 `FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1` 到 `/etc/environment`。 |
 | 集成 TMOE (`enable_tmoe`) | `true`、`false` | `true` | 集成 TMOE。 |
 | 移除 Ubuntu Snap (`nosnap`) | `true`、`false` | `false` | 只对 Ubuntu 有意义，用于移除 Snap、snapd 和可能重新安装 snapd 的 APT 策略。 |
-| systemd 257 旧内核兼容 (`enable_systemd257`) | `true`、`false` | `false` | 启用后，在当前 systemd 主版本高于 257 时从 `droidspaces-package` 安装完整的原生包族；systemd 257 及更低版本自动跳过。安装完成后会锁定 systemd 相关包，避免再次升级覆盖。 |
+| systemd 257 旧内核兼容 (`enable_systemd257`) | `true`、`false` | `false` | 只支持 `none` 和普通 `KDE`。普通 KDE 保留所选后端与自启动设置；其他桌面强制回退到 `none`，`all-wayland` 下则直接拒绝。当前 systemd 高于 257 时安装完整原生包族并锁定，257 及更低版本跳过安装。 |
 | 输入法 Fcitx5 支持 (`enable_srf`) | `true`、`false` | `false` | 安装 Fcitx5 输入法。 |
 | 跨架构支持 (`enable_binfmt`) | `true`、`false` | `false` | 在 RootFS 内加入 binfmt 跨架构支持组件。Arch 当前不建议使用。 |
 | NAT 和硬件识别支持 (`enable_yj`) | `true`、`false` | `true` | 启用容器硬件和网络识别增强。 |
@@ -108,11 +109,12 @@ GitHub Actions 的主要输入项如下：
 
 开启 `enable_systemd257` 后，RootFS 会运行 `scripts/systemd257.sh`。脚本会先检测发行版现有的 systemd 主版本：
 
+- 支持白名单只有 `none` 和普通 `KDE`：普通 KDE 保留 X11/Anland Wayland 与桌面自启动设置；GNOME、KDE Mobile 及未来新增但未经验证的桌面会回退到 `none`，在 `all-wayland` 下则直接拒绝；
 - 257 或更低版本（例如 Debian 13、Ubuntu 24.04）直接跳过；
 - 高于 257 的 apt、dnf 和 pacman 系统从 `droidspaces-package` 的冻结兼容 Release `systemd257-packages` 安装对应发行版的完整 systemd 257 包族；后续包族先发布到不可变标签，再由 RootFS 一次性更新标签与校验元数据；
-- 安装由发行版包管理器完成，并锁定 systemd 相关软件包，防止后续升级覆盖兼容版本。
+- 安装由发行版包管理器完成；APT 事务禁止删除任何现有包，安装完成后锁定 systemd 相关软件包，防止后续升级覆盖兼容版本。
 
-该选项主要面向旧 Android 内核，属于实验性兼容方案，会显著增加构建时间；建议先在目标内核上验证桌面、dbus、udev 和网络功能。
+该选项主要面向旧 Android 内核，属于实验性兼容方案，会显著增加构建时间；建议先在目标内核上验证 dbus、udev 和网络功能。
 
 ## 使用 GitHub Actions 构建
 
@@ -228,18 +230,18 @@ Wayland 支持依赖 [anland](https://github.com/superturtlee/anland) 和 [`droi
 
 ### 一键安装 Anland KDE Release 包
 
-`scripts/install-anland-kde.sh` 会自动识别 ARM64 发行版，默认从 `Goldzxcbug/droidspaces-package` 的固定滚动 Release 安装匹配的 patched KWin/Xwayland 包，并锁定相关软件包。支持的系统、下载镜像、完整性校验、参数和独立安装方法已移至 [scripts 目录说明](scripts/README.md#anland-kde-安装器)。
+`scripts/tui/install-anland-kde.sh` 会自动识别 ARM64 发行版，默认从 `Goldzxcbug/droidspaces-package` 的固定滚动 Release 安装匹配的 patched KWin/Xwayland 包，并锁定相关软件包。支持的系统、下载镜像、完整性校验、参数和独立安装方法已移至 [scripts 目录说明](scripts/README.md#anland-kde-安装器)。
 
 从仓库根目录运行：
 
 ```bash
-sudo ./scripts/install-anland-kde.sh
+sudo ./scripts/tui/install-anland-kde.sh
 ```
 
 GNOME 对应的安装器只支持 Debian 13 与 Ubuntu 26 ARM64，并读取固定的 `anland-gnome-packages` Release：
 
 ```bash
-sudo ./scripts/install-anland-gnome.sh
+sudo ./scripts/tui/install-anland-gnome.sh
 ```
 
 推荐构建选项：
@@ -387,6 +389,9 @@ sudo download-firmware
 │   ├── configure-desktop.sh
 │   ├── install-desktop.sh
 │   ├── start-desktop-session.sh
+│   ├── binfmt/
+│   │   ├── qemu-binfmt-register.service
+│   │   └── qemu-binfmt-register.sh
 │   ├── desktops/
 │   │   ├── gnome.sh
 │   │   ├── kde.sh
@@ -396,18 +401,19 @@ sudo download-firmware
 │   │   └── desktop-config.sh
 │   ├── start/
 │   │   └── desktop-session.service
+│   ├── tui/
+│   │   ├── droidspaces-tui.sh
+│   │   ├── install-anland-gnome.sh
+│   │   ├── install-anland-kde.sh
+│   │   ├── install-hangover-wine.sh
+│   │   ├── install-mesa.sh
+│   │   └── install-winefonts.sh
 │   ├── bashrc.sh
 │   ├── download-firmware
 │   ├── install-usb-manager.sh
 │   ├── install-anland-desktop.sh
-│   ├── install-anland-gnome.sh
-│   ├── install-anland-kde.sh
-│   ├── install-mesa.sh
 │   ├── nosnap.sh
 │   └── systemd257.sh
-├── scripts/binfmt/
-│   ├── qemu-binfmt-register.service
-│   └── qemu-binfmt-register.sh
 └── .github/workflows/
     ├── build-rootfs-core.yml
     ├── build-rootfs-releases-en.yml

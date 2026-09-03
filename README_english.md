@@ -41,13 +41,14 @@ The goal is to reduce the amount of manual setup required to run a desktop Linux
 
 - Multi-distribution RootFS builds for Debian, Ubuntu, Fedora, and Arch.
 - Desktop choices for command-line only, KDE, KDE mobile, and GNOME RootFS images.
+- A unified maintenance TUI: run `droidspaces-tui`, `dstui`, or `ds-tui` in the container to install Mesa, Hangover Wine, Wine fonts, and Anland KDE/GNOME components.
 - Desktop auto-start and failure recovery using shared systemd service templates for X11, Plasma Wayland, Plasma Mobile, and GNOME Wayland, with rate-limited automatic restarts after failures.
 - Termux:X11 desktop startup support. X11 mode defaults to `DISPLAY=:5`.
 - PulseAudio forwarding through Unix socket, TCP, or disabled mode.
 - Optional Chinese locale with `zh_CN.UTF-8` and `Asia/Shanghai` timezone.
 - Optional Fcitx5 input method. Chinese input addons are installed when Chinese localization is enabled.
 - Snapdragon GPU support using configuration from `mesa-for-android-container`.
-- All seven distributions use `scripts/install-mesa.sh` to install the matching ARM64 Mesa driver and latest `droidspaces-media-decode` VA-API driver, then lock only the related Mesa packages. The Anland KDE and GNOME installers separately hold KWin/Xwayland and Mutter/Xwayland. Source selection, integrity verification, and hold mechanisms are documented in the [scripts directory guide](scripts/README_english.md#mesa-installer).
+- All seven distributions use `scripts/tui/install-mesa.sh` to install the matching ARM64 Mesa driver and latest `droidspaces-media-decode` VA-API driver, then lock only the related Mesa packages. The Anland KDE and GNOME installers separately hold KWin/Xwayland and Mutter/Xwayland. Source selection, integrity verification, and hold mechanisms are documented in the [scripts directory guide](scripts/README_english.md#mesa-installer).
 - Native ARM64 Google Chrome: every desktop profile replaces Chromium with Chrome Stable. Debian/Ubuntu and Fedora use Google's official repositories; Arch uses the ARM64 AUR packaging recipe.
 - Optional Snapdragon 8 Gen 2 Wayland display-corruption fix through a Turnip UBWC environment setting.
 - Container integration improvements for common Android/Droidspaces hardware, network, and group recognition.
@@ -55,7 +56,7 @@ The goal is to reduce the amount of manual setup required to run a desktop Linux
 - Optional development toolchain packages, including compilers, CMake, and Python development tooling.
 - Optional compression utilities such as `zip`, `unzip`, `7z`, `xz`, `tar`, and `gzip`.
 - Optional Docker packages inside the RootFS.
-- Optional old-kernel systemd compatibility: on apt, dnf, or pacman targets whose systemd major version is above 257, install a complete package-manager-owned systemd 257 family; Debian 13 and other 257-or-older systems are skipped automatically.
+- Optional old-kernel systemd compatibility: on apt, dnf, or pacman targets whose systemd major version is above 257, install a complete package-manager-owned systemd 257 family; only `none` and verified standard `KDE` are supported, while Debian 13 and other 257-or-older systems skip installation automatically.
 - ARM64 Wayland/Anland support through the separate [`droidspaces-package`](https://github.com/Goldzxcbug/droidspaces-package) repository: patched KWin/Xwayland for KDE, plus patched Mutter/Xwayland for GNOME on Debian 13 and Ubuntu 26.04.
 - USB device management on every distribution through Droidspaces USB Manager, including USB storage, ADB device nodes, mounting, unmounting, and a system tray interface.
 - Automatic Release publishing with the RootFS `.tar.xz` files.
@@ -77,7 +78,7 @@ The main GitHub Actions inputs are:
 | Fix Snapdragon 8 Gen 2 Wayland display corruption (`enable_8gen2_wayland`) | `true`, `false` | `false` | Writes `FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1` to `/etc/environment` for Debian 13, Ubuntu 26, Fedora 43/44, and Arch. |
 | Integrate TMOE (`enable_tmoe`) | `true`, `false` | `true` | Integrates TMOE. |
 | Remove Ubuntu Snap (`nosnap`) | `true`, `false` | `false` | Ubuntu-only option that removes Snap, snapd, and APT policy paths that may reinstall snapd. |
-| systemd 257 old-kernel compatibility (`enable_systemd257`) | `true`, `false` | `false` | When enabled, installs the complete native package family from `droidspaces-package` if the current systemd major version is above 257; versions 257 and older are skipped. systemd-related packages are then locked. |
+| systemd 257 old-kernel compatibility (`enable_systemd257`) | `true`, `false` | `false` | Supports only `none` and standard `KDE`. KDE keeps the selected backend and auto-start setting; other desktops fall back to `none`, or are rejected with `all-wayland`. Installs and locks the complete native family above systemd 257, and skips installation on 257 or older. |
 | Fcitx5 input method support (`enable_srf`) | `true`, `false` | `false` | Installs Fcitx5 input method support. |
 | Cross-architecture support (`enable_binfmt`) | `true`, `false` | `false` | Adds binfmt cross-architecture components inside the RootFS. Not recommended for Arch in this project. |
 | NAT and hardware recognition (`enable_yj`) | `true`, `false` | `true` | Enables container hardware and network recognition improvements. |
@@ -107,11 +108,12 @@ Audio mode details:
 
 When `enable_systemd257` is enabled, the build runs `scripts/systemd257.sh`. The script first detects the installed systemd major version:
 
+- the allowlist contains only `none` and standard `KDE`: KDE keeps its X11/Anland Wayland and auto-start settings; GNOME, KDE Mobile, and future unverified desktops fall back to `none`, or are rejected under `all-wayland`;
 - systemd 257 or older (for example Debian 13 and Ubuntu 24.04) is skipped;
 - apt, dnf, and pacman systems above 257 install their complete systemd 257 package family from the frozen compatibility Release `systemd257-packages` in `droidspaces-package`; later package sets are published under immutable tags before the RootFS updates its tag and pinned verification metadata together;
-- installation is handled by the native package manager, and systemd-related packages are locked so a later upgrade does not overwrite the compatibility version.
+- installation is handled by the native package manager; APT is forbidden from removing existing packages, and systemd-related packages are locked so a later upgrade does not overwrite the compatibility version.
 
-This option targets old Android kernels and is experimental. It adds substantial build time; test the desktop, dbus, udev, and networking behavior on the target kernel before distributing the image.
+This option targets old Android kernels and is experimental. It adds substantial build time; test dbus, udev, and networking behavior on the target kernel before distributing the image.
 
 ## Build with GitHub Actions
 
@@ -227,18 +229,18 @@ Wayland support depends on [anland](https://github.com/superturtlee/anland) and 
 
 ### One-Click Installation of Anland KDE Release Packages
 
-`scripts/install-anland-kde.sh` detects the ARM64 distribution, installs matching patched KWin/Xwayland packages from the fixed rolling Release in `Goldzxcbug/droidspaces-package` by default, and locks the related packages. Supported systems, download mirrors, integrity checks, options, and standalone installation details are documented in the [scripts directory guide](scripts/README_english.md#anland-kde-installer).
+`scripts/tui/install-anland-kde.sh` detects the ARM64 distribution, installs matching patched KWin/Xwayland packages from the fixed rolling Release in `Goldzxcbug/droidspaces-package` by default, and locks the related packages. Supported systems, download mirrors, integrity checks, options, and standalone installation details are documented in the [scripts directory guide](scripts/README_english.md#anland-kde-installer).
 
 Run it from the repository root:
 
 ```bash
-sudo ./scripts/install-anland-kde.sh
+sudo ./scripts/tui/install-anland-kde.sh
 ```
 
 The GNOME installer supports Debian 13 and Ubuntu 26 ARM64 and reads the fixed `anland-gnome-packages` Release:
 
 ```bash
-sudo ./scripts/install-anland-gnome.sh
+sudo ./scripts/tui/install-anland-gnome.sh
 ```
 
 Recommended build options:
@@ -386,6 +388,9 @@ sudo download-firmware
 │   ├── configure-desktop.sh
 │   ├── install-desktop.sh
 │   ├── start-desktop-session.sh
+│   ├── binfmt/
+│   │   ├── qemu-binfmt-register.service
+│   │   └── qemu-binfmt-register.sh
 │   ├── desktops/
 │   │   ├── gnome.sh
 │   │   ├── kde.sh
@@ -395,18 +400,19 @@ sudo download-firmware
 │   │   └── desktop-config.sh
 │   ├── start/
 │   │   └── desktop-session.service
+│   ├── tui/
+│   │   ├── droidspaces-tui.sh
+│   │   ├── install-anland-gnome.sh
+│   │   ├── install-anland-kde.sh
+│   │   ├── install-hangover-wine.sh
+│   │   ├── install-mesa.sh
+│   │   └── install-winefonts.sh
 │   ├── bashrc.sh
 │   ├── download-firmware
 │   ├── install-usb-manager.sh
 │   ├── install-anland-desktop.sh
-│   ├── install-anland-gnome.sh
-│   ├── install-anland-kde.sh
-│   ├── install-mesa.sh
 │   ├── nosnap.sh
 │   └── systemd257.sh
-├── scripts/binfmt/
-│   ├── qemu-binfmt-register.service
-│   └── qemu-binfmt-register.sh
 └── .github/workflows/
     ├── build-rootfs-core.yml
     ├── build-rootfs-releases-en.yml
