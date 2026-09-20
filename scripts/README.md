@@ -17,6 +17,7 @@
 | `tui/install-winefonts.sh` | Linux 容器 | 安装 Wine 字体包并刷新 fontconfig 字体缓存。 |
 | `tui/install-anland-kde.sh` | ARM64 Linux 容器 | 安装 Anland patched KWin/Xwayland Release 包，并锁定相关包。 |
 | `tui/install-anland-gnome.sh` | ARM64 Debian/Ubuntu 容器 | 安装 Anland patched Mutter/Xwayland Release 包，并锁定相关包。 |
+| `tui/install-anland-next.sh` | ARM64 Debian/Ubuntu/Fedora/Arch 容器 | 安装 Anland Next session 包（mini-wm + patched Xwayland + patched bubblewrap）。 |
 | `install-anland-desktop.sh` | RootFS 构建环境 | 根据桌面 slug 分发到 KDE 或 GNOME Anland 安装器。 |
 | `lib/anland-build.sh` | RootFS 构建宿主 | 为 native/QEMU 构建统一解析 Anland 包族、Release tag 和 revision。 |
 | `install-usb-manager.sh` | Linux 容器 | 安装 Droidspaces USB Manager、发行版依赖、菜单入口和用户权限。 |
@@ -44,11 +45,11 @@ ds-tui
 ./scripts/tui/droidspaces-tui.sh
 ```
 
-主菜单包含 Mesa 与 MediaCodec VA-API、Hangover Wine、Wine 字体及当前 RootFS 对应的桌面更新项，只显示黄色“检测到更新”、绿色“当前已是最新版本”或红色“未安装”。桌面更新项严格解析 `/etc/droidspaces-desktop.conf`：KDE/KDE mobile 只显示 Anland KDE，GNOME 只显示 Anland GNOME；`none` 或未知桌面进入选择页，可选择 Anland KWin 或 GNOME。旧 RootFS 缺少配置文件时才按已安装的 Anland 组件兜底，无法判断时同样进入选择页。选择组件后进入版本详情，可更新、安装或卸载。版本查询在后台并发运行，动态 Braille 符号表示正在查询，单项 10 秒内未取得有效版本时显示“超时”，且查询不会阻塞菜单输入。版本检测在启动 TUI 时运行，进入菜单、返回或输入无效内容不会重新检测；安装或卸载实际开始执行后，返回主菜单时会自动刷新一次。输入内容可见并支持退格，Loading 使用原地重绘，避免反复清屏闪烁。卸载 Mesa、KWin 或 Mutter 补丁会恢复发行版官方包，Hangover Wine 和 Wine 字体则移除自身内容。中文环境默认使用 CNB，其他语言环境默认使用 GitHub；下载源也可以统一改为自动测速、GitHub、`gh-proxy.com` 或 CNB。
+主菜单包含 Mesa 与 MediaCodec VA-API、Hangover Wine、Wine 字体及当前 RootFS 对应的桌面/会话更新项，只显示黄色“检测到更新”、绿色“当前已是最新版本”或红色“未安装”。桌面/会话项严格解析 `/etc/droidspaces-desktop.conf`：KDE/KDE mobile 只显示 Anland KDE，GNOME 只显示 Anland GNOME，Anland Next 只显示其 session；`none` 或未知桌面进入选择页，可选择 Anland KDE、GNOME 或 Next session。旧 RootFS 缺少配置文件时才按已安装的 Anland 组件兜底，无法判断时同样进入选择页。选择组件后进入版本详情，可更新、安装或卸载。版本查询在后台并发运行，动态 Braille 符号表示正在查询，单项 10 秒内未取得有效版本时显示“超时”，且查询不会阻塞菜单输入。版本检测在启动 TUI 时运行，进入菜单、返回或输入无效内容不会重新检测；安装或卸载实际开始执行后，返回主菜单时会自动刷新一次。输入内容可见并支持退格，Loading 使用原地重绘，避免反复清屏闪烁。卸载 Mesa、KWin 或 Mutter 补丁会恢复发行版官方包，Hangover Wine 和 Wine 字体则移除自身内容。中文环境默认使用 CNB，其他语言环境默认使用 GitHub；下载源也可以统一改为自动测速、GitHub、`gh-proxy.com` 或 CNB。明确选择 CNB 时，TUI 不查询 GitHub API，安装器从同一 CNB Release 的同步清单取得附件名、SHA-256 和大小；旧发布未提供摘要时会明确提示并保留归档结构与包元数据校验。
 
 主菜单的 `C` 进入缓存管理。可以只清理 Hangover Release 清单缓存，解决滚动 Release 更新后旧清单无法续传的问题；也可以清空 `/var/cache/hangover-wine` 下的全部下载缓存。两项操作都需要确认，清空全部缓存会导致下次安装重新下载软件包。
 
-主菜单的 `U` 进入更新管理，可检查更新、只更新 TUI、只更新受管安装脚本，或更新全部。TUI 会临时获取固定标签 `Gold-bug-tui` 中的一次性安装脚本，以 GitHub Release API 的 SHA-256 校验 GitHub、`gh-proxy.com` 或 CNB 下载，在替换前备份旧文件，并在操作结束后删除临时脚本。
+主菜单的 `U` 进入更新管理，可检查更新、只更新 TUI、只更新受管安装脚本，或更新全部。TUI 会临时获取固定标签 `Gold-bug-tui` 中的一次性安装脚本；GitHub/代理模式使用 GitHub Release API 与发布清单交叉校验，CNB 模式只读取 CNB 的同步清单进行 SHA-256 和大小校验，在替换前备份旧文件，并在操作结束后删除临时脚本。
 
 也可以在启动时指定初始来源：
 
@@ -59,9 +60,9 @@ droidspaces-tui --source github
 
 ## Mesa 安装器
 
-`install-mesa.sh` 从 `lfdevs/mesa-for-android-container` 的最新 GitHub Release 选择当前发行版对应的 ARM64 Mesa 资产，并从 `Re-s/droidspaces-media-decode` 的最新稳定 Release 安装 `msm_drm_drv_video.so`。支持 Debian 13、Ubuntu 24.04/25.10/26.04、Fedora 43/44 和 Arch Linux。媒体解码驱动按发行版安装到 libva 的默认驱动目录：Debian/Ubuntu 为 `/usr/lib/aarch64-linux-gnu/dri`，Fedora 为 `/usr/lib64/dri`，Arch Linux 为 `/usr/lib/dri`。
+`install-mesa.sh` 在 GitHub/代理模式从分发 Release 选择当前发行版对应的 ARM64 Mesa 资产；CNB 模式则只读取同一 CNB Release 的 `mesa-distribution-manifest`。随后安装其中同步的 `msm_drm_drv_video.so`。支持 Debian 13、Ubuntu 24.04/25.10/26.04、Fedora 43/44 和 Arch Linux。媒体解码驱动按发行版安装到 libva 的默认驱动目录：Debian/Ubuntu 为 `/usr/lib/aarch64-linux-gnu/dri`，Fedora 为 `/usr/lib64/dri`，Arch Linux 为 `/usr/lib/dri`。
 
-安装器会严格检查 Release tag、资产名和官方下载地址。使用镜像源时，Mesa 归档会根据 GitHub Release API 公布的 SHA-256 digest 校验；媒体解码驱动在所有下载源下都会校验 Release API digest、上游 `SHA256SUMS` 及资产大小。下载支持断点续传，临时文件在退出时自动清理。
+安装器会严格检查 Release tag、资产名和下载内容。GitHub/代理模式保留 GitHub Release API 的 SHA-256 交叉校验；CNB 模式只使用 CNB 分发清单中的 SHA-256 与大小，并继续校验随 Release 同步的媒体驱动 `SHA256SUMS`。下载支持断点续传，临时文件在退出时自动清理。
 
 从仓库根目录交互运行：
 
@@ -134,6 +135,27 @@ sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
   ./scripts/tui/install-anland-gnome.sh --1
 ```
 
+## Anland Next 安装器
+
+`install-anland-next.sh` 默认从固定滚动 Release `anland-session-packages` 读取 `anland-session-manifest`，为 Debian 13、Ubuntu 26.04、Fedora 43/44 或 Arch Linux ARM64 安装 `anland-session` 包。下载源选择、镜像 digest 校验和命令行参数与 KDE 安装器一致。
+
+```bash
+sudo ./scripts/tui/install-anland-next.sh
+```
+
+包内是三个预编译产物：`anland-miniwm`，以及打过 kgsl/turnip glamor 补丁的 Xwayland 与打过 mountinfo 索引补丁的 bubblewrap。后两者装在 `/usr/lib/anland/`，由会话把它前置到 PATH，发行版的同名二进制不会被覆盖，因此**不需要**像 KDE/GNOME 那样做软件包锁定 —— 这个包不替换任何发行版文件。
+
+会话本体是包内的 `/usr/bin/anland-session`（会话 D-Bus + wayland 链接 + rootless Xwayland + mini-wm），配合 `/usr/lib/systemd/user/anland-session.service` 使用，不往用户家目录写任何东西。
+
+Anland Next profile 默认让 Qt 6 应用使用原生 Wayland，并显式安装对应平台插件；直接通过终端启动时，用户 shell 会读取运行中的 `~/.anlandx-env`。
+
+使用公开 Fork 的包时覆盖仓库变量：
+
+```bash
+sudo ANLAND_NEXT_RELEASE_REPOSITORY=owner/repository \
+  ./scripts/tui/install-anland-next.sh --1
+```
+
 ## USB Manager 安装器
 
 `install-usb-manager.sh` 支持 Debian/Ubuntu、Fedora 和 Arch，自动安装 PyQt5、ADB、udev、NTFS、exFAT 等依赖，并安装 `usb-manager`、`usb-passthrough` 和 `usb-storage-passthrough` 命令。
@@ -184,6 +206,7 @@ bash -n scripts/tui/install-mesa.sh
 bash -n scripts/tui/droidspaces-tui.sh
 bash -n scripts/tui/install-anland-kde.sh
 bash -n scripts/tui/install-anland-gnome.sh
+bash -n scripts/tui/install-anland-next.sh
 bash -n scripts/install-usb-manager.sh
 shellcheck scripts/tui/install-mesa.sh
 shellcheck scripts/tui/droidspaces-tui.sh

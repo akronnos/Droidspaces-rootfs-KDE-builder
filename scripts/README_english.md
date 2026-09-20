@@ -17,6 +17,7 @@ This directory contains installers used while building the RootFS, maintenance t
 | `tui/install-winefonts.sh` | Linux container | Installs the Wine font bundle and refreshes the fontconfig cache. |
 | `tui/install-anland-kde.sh` | ARM64 Linux container | Installs Anland patched KWin/Xwayland Release packages and locks them. |
 | `tui/install-anland-gnome.sh` | ARM64 Debian/Ubuntu container | Installs Anland patched Mutter/Xwayland Release packages and locks them. |
+| `tui/install-anland-next.sh` | ARM64 Debian/Ubuntu/Fedora/Arch container | Installs the Anland Next session package (mini-wm + patched Xwayland + patched bubblewrap). |
 | `install-anland-desktop.sh` | RootFS build environment | Dispatches a desktop slug to the KDE or GNOME Anland installer. |
 | `lib/anland-build.sh` | RootFS build host | Resolves the Anland package family, Release tag, and revision for native/QEMU builds. |
 | `install-usb-manager.sh` | Linux container | Installs Droidspaces USB Manager, distribution dependencies, launchers, and user permissions. |
@@ -44,11 +45,11 @@ Run it from a repository checkout with:
 ./scripts/tui/droidspaces-tui.sh
 ```
 
-The main menu includes Mesa with MediaCodec VA-API, Hangover Wine, Wine fonts, and the desktop update entry for the current RootFS, and shows only `update available`, `up to date`, or `not installed` with matching colors. The desktop entry is selected by strictly parsing `/etc/droidspaces-desktop.conf`: KDE and KDE mobile show only Anland KDE, while GNOME shows only Anland GNOME. `none` or an unknown desktop opens a selector for Anland KWin or GNOME. Installed Anland state is used only as a fallback for old RootFS images that have no config file; if no component can be inferred, the selector is used. Selecting a component opens its version details and update, install, or uninstall actions. Version lookups run concurrently in the background, a dynamic Braille symbol indicates an active lookup, and a lookup that has no valid result after 10 seconds is shown as `timeout` without blocking menu input. Version detection runs when the TUI starts; entering or leaving menus and submitting invalid input do not restart it. After an install or uninstall actually starts, detection refreshes once upon returning to the main menu. Input is visible with backspace support, and Loading uses in-place redraws instead of repeatedly clearing the screen. Uninstalling patched Mesa, KWin, or Mutter restores distribution packages, while Hangover Wine and Wine fonts remove their own content. Chinese environments default to CNB, while other languages default to GitHub; the source can also be changed to automatic probing, GitHub, `gh-proxy.com`, or CNB.
+The main menu includes Mesa with MediaCodec VA-API, Hangover Wine, Wine fonts, and the desktop/session update entry for the current RootFS, and shows only `update available`, `up to date`, or `not installed` with matching colors. The desktop/session entry is selected by strictly parsing `/etc/droidspaces-desktop.conf`: KDE and KDE mobile show only Anland KDE, GNOME shows only Anland GNOME, and Anland Next shows only its session. `none` or an unknown desktop opens a selector for Anland KDE, GNOME, or the Next session. Installed Anland state is used only as a fallback for old RootFS images that have no config file; if no component can be inferred, the selector is used. Selecting a component opens its version details and update, install, or uninstall actions. Version lookups run concurrently in the background, a dynamic Braille symbol indicates an active lookup, and a lookup that has no valid result after 10 seconds is shown as `timeout` without blocking menu input. Version detection runs when the TUI starts; entering or leaving menus and submitting invalid input do not restart it. After an install or uninstall actually starts, detection refreshes once upon returning to the main menu. Input is visible with backspace support, and Loading uses in-place redraws instead of repeatedly clearing the screen. Uninstalling patched Mesa, KWin, or Mutter restores distribution packages, while Hangover Wine and Wine fonts remove their own content. Chinese environments default to CNB, while other languages default to GitHub; the source can also be changed to automatic probing, GitHub, `gh-proxy.com`, or CNB. When CNB is explicitly selected, the TUI does not query the GitHub API: installers obtain asset names, SHA-256 values, and sizes from the synchronized manifest in the same CNB Release. Older releases with no digest provide a clear notice and retain archive-structure and package-metadata validation.
 
 Press `C` in the main menu to open cache management. The Hangover Release manifest can be removed by itself to recover from a stale manifest after a rolling Release update, or all downloads under `/var/cache/hangover-wine` can be removed. Both actions require confirmation, and cleaning all downloads means the package archive must be downloaded again on the next installation.
 
-Press `U` to open update management. It can check for updates, update only the TUI, update only managed installer scripts, or update everything. The TUI temporarily obtains the one-time installer from the fixed `Gold-bug-tui` tag, verifies GitHub, `gh-proxy.com`, or CNB downloads against SHA-256 values from the GitHub Release API, backs up old files before replacement, and removes the temporary installer when finished.
+Press `U` to open update management. It can check for updates, update only the TUI, update only managed installer scripts, or update everything. The TUI temporarily obtains the one-time installer from the fixed `Gold-bug-tui` tag. GitHub/proxy mode cross-checks the GitHub Release API and the release manifest; CNB mode reads only the synchronized CNB manifest for SHA-256 and size verification, backs up old files before replacement, and removes the temporary installer when finished.
 
 An initial source can also be selected on startup:
 
@@ -59,9 +60,9 @@ droidspaces-tui --source github
 
 ## Mesa Installer
 
-`install-mesa.sh` selects the ARM64 Mesa asset for the current distribution from the latest `lfdevs/mesa-for-android-container` GitHub Release, then installs `msm_drm_drv_video.so` from the latest stable `Re-s/droidspaces-media-decode` Release. It supports Debian 13, Ubuntu 24.04/25.10/26.04, Fedora 43/44, and Arch Linux. The media decode driver is installed in each distribution's default libva driver directory: `/usr/lib/aarch64-linux-gnu/dri` on Debian/Ubuntu, `/usr/lib64/dri` on Fedora, and `/usr/lib/dri` on Arch Linux.
+`install-mesa.sh` selects the ARM64 Mesa asset for the current distribution from the distribution Release in GitHub/proxy mode; CNB mode reads only `mesa-distribution-manifest` from the matching CNB Release. It then installs the synchronized `msm_drm_drv_video.so`. It supports Debian 13, Ubuntu 24.04/25.10/26.04, Fedora 43/44, and Arch Linux. The media decode driver is installed in each distribution's default libva driver directory: `/usr/lib/aarch64-linux-gnu/dri` on Debian/Ubuntu, `/usr/lib64/dri` on Fedora, and `/usr/lib/dri` on Arch Linux.
 
-The installer strictly validates Release tags, asset names, and official download URLs. Mirror downloads of the Mesa archive are verified against the SHA-256 digest published by the GitHub Release API. For every source, the media decode driver is checked against the Release API digest, upstream `SHA256SUMS`, and the published asset size. Downloads can resume, and temporary files are removed on exit.
+The installer strictly validates Release tags, asset names, and downloaded content. GitHub/proxy mode retains GitHub Release API SHA-256 cross-checks; CNB mode uses only the SHA-256 values and sizes in the CNB distribution manifest, then still verifies the synchronized media-driver `SHA256SUMS`. Downloads can resume, and temporary files are removed on exit.
 
 Run interactively from the repository root:
 
@@ -134,6 +135,27 @@ sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
   ./scripts/tui/install-anland-gnome.sh --1
 ```
 
+## Anland Next Installer
+
+`install-anland-next.sh` reads `anland-session-manifest` from the fixed `anland-session-packages` rolling Release and installs the `anland-session` package for Debian 13, Ubuntu 26.04, Fedora 43/44, or Arch Linux on ARM64. Its source selection, mirror digest checks, and arguments match the KDE installer.
+
+```bash
+sudo ./scripts/tui/install-anland-next.sh
+```
+
+The package carries three prebuilt components: `anland-miniwm`, a Xwayland patched for kgsl/turnip glamor, and a bubblewrap patched for the mountinfo index. The latter two live in `/usr/lib/anland/`, which the session puts first on `PATH`; the distribution binaries are never replaced, so unlike KDE/GNOME **no package locking is needed** — this package overwrites nothing.
+
+The session itself is the packaged `/usr/bin/anland-session` (session D-Bus + wayland link + rootless Xwayland + mini-wm) together with `/usr/lib/systemd/user/anland-session.service`, and nothing is written into a user's home directory.
+
+The Anland Next profile defaults Qt 6 applications to native Wayland and explicitly installs its platform plugin; an interactive user shell imports `~/.anlandx-env` while the session is running. Kate launchers consistently use `kate -b`, avoiding its no-window exit in a minimal session. Legacy X11/XCB applications remain compatible through the packaged Xwayland, without injecting additional Qt/X11 scaling variables.
+
+To use packages from a public fork, override the repository variable:
+
+```bash
+sudo ANLAND_NEXT_RELEASE_REPOSITORY=owner/repository \
+  ./scripts/tui/install-anland-next.sh --1
+```
+
 ## USB Manager Installer
 
 `install-usb-manager.sh` supports Debian/Ubuntu, Fedora, and Arch. It installs PyQt5, ADB, udev, NTFS, exFAT, and other matching dependencies, followed by the `usb-manager`, `usb-passthrough`, and `usb-storage-passthrough` commands.
@@ -184,6 +206,7 @@ bash -n scripts/tui/install-mesa.sh
 bash -n scripts/tui/droidspaces-tui.sh
 bash -n scripts/tui/install-anland-kde.sh
 bash -n scripts/tui/install-anland-gnome.sh
+bash -n scripts/tui/install-anland-next.sh
 bash -n scripts/install-usb-manager.sh
 shellcheck scripts/tui/install-mesa.sh
 shellcheck scripts/tui/droidspaces-tui.sh

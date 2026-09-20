@@ -17,6 +17,7 @@ readonly GH_PROXY_RELEASE_URL="https://gh-proxy.com/https://github.com"
 readonly CNB_RELEASE_URL="https://cnb.cool"
 readonly APT_HOLD_STATE="/var/lib/anland-gnome/apt-holds"
 readonly COMPONENT_STATE_DIR="/var/lib/droidspaces-tui/components"
+readonly DESKTOP_CONFIG="${DROIDSPACES_DESKTOP_CONFIG:-/etc/droidspaces-desktop.conf}"
 
 WORK_DIR=""
 PREPARED_WORK_DIR="${ANLAND_GNOME_WORK_DIR:-}"
@@ -73,6 +74,65 @@ record_component_version() {
     rm -f -- "$temporary_file" || true
     log "无法记录已安装的 Mutter 版本。" "Could not record the installed Mutter version."
     return 0
+}
+
+update_desktop_config() {
+    local desktop="gnome" config_dir temporary_file line configured_desktop=""
+    local desktop_lines=0
+
+    config_dir="$(dirname -- "$DESKTOP_CONFIG")"
+    if [[ ! -e "$DESKTOP_CONFIG" && ! -L "$DESKTOP_CONFIG" ]]; then
+        if [[ ! -d "$config_dir" ]]; then
+            install -d -m 0755 -- "$config_dir" || \
+                die "无法创建桌面配置目录。" "Could not create the desktop configuration directory."
+        fi
+        temporary_file="$(mktemp "$config_dir/.droidspaces-desktop.conf.tmp.XXXXXXXX")" || \
+            die "无法创建临时桌面配置。" "Could not create a temporary desktop configuration."
+        if ! printf 'DESKTOP=%s\n' "$desktop" > "$temporary_file" || \
+            ! chmod 0644 "$temporary_file" || ! mv -f -- "$temporary_file" "$DESKTOP_CONFIG"; then
+            rm -f -- "$temporary_file" || true
+            die "无法创建桌面配置。" "Could not create the desktop configuration."
+        fi
+        log "已创建桌面配置：DESKTOP=${desktop}。" \
+            "Created the desktop configuration with DESKTOP=${desktop}."
+        return
+    fi
+
+    if [[ ! -f "$DESKTOP_CONFIG" || -L "$DESKTOP_CONFIG" || ! -r "$DESKTOP_CONFIG" ]]; then
+        die "桌面配置不是可安全修改的普通文件：${DESKTOP_CONFIG}。" \
+            "The desktop configuration is not a safely writable regular file: ${DESKTOP_CONFIG}."
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            DESKTOP=*)
+                configured_desktop="${line#DESKTOP=}"
+                ((desktop_lines += 1))
+                ;;
+        esac
+    done < "$DESKTOP_CONFIG"
+    if ((desktop_lines != 1)) || \
+        [[ ! "$configured_desktop" =~ ^(none|[a-z][a-z0-9-]*)$ ]]; then
+        die "桌面配置格式无效，未覆盖原文件。" \
+            "The desktop configuration is invalid; the original file was not overwritten."
+    fi
+    if [[ "$configured_desktop" != none ]]; then
+        log "保留现有桌面配置：DESKTOP=${configured_desktop}。" \
+            "Keeping the existing desktop configuration: DESKTOP=${configured_desktop}."
+        return
+    fi
+
+    temporary_file="$(mktemp "$config_dir/.droidspaces-desktop.conf.tmp.XXXXXXXX")" || \
+        die "无法创建临时桌面配置。" "Could not create a temporary desktop configuration."
+    if ! awk -v desktop="$desktop" '
+        /^DESKTOP=/ { print "DESKTOP=" desktop; next }
+        { print }
+    ' "$DESKTOP_CONFIG" > "$temporary_file" || ! chmod 0644 "$temporary_file" || \
+        ! mv -f -- "$temporary_file" "$DESKTOP_CONFIG"; then
+        rm -f -- "$temporary_file" || true
+        die "无法更新桌面配置。" "Could not update the desktop configuration."
+    fi
+    log "已将桌面配置更新为 DESKTOP=${desktop}。" \
+        "Updated the desktop configuration to DESKTOP=${desktop}."
 }
 
 die() {
@@ -162,6 +222,7 @@ require_root() {
         "ANLAND_GNOME_RELEASE_TAG=$RELEASE_TAG" \
         "ANLAND_GNOME_WORK_DIR=$WORK_DIR" \
         "ANLAND_GNOME_PACKAGE_DIR=$PACKAGE_DIR" \
+        "DROIDSPACES_DESKTOP_CONFIG=$DESKTOP_CONFIG" \
         bash "$script_path" "$@"; then
         status=0
     else
@@ -267,7 +328,7 @@ resolve_release_tag() {
 
 resolve_archive_name() {
     local manifest_file="$1"
-    local manifest_format manifest_release_tag selected_name
+    local manifest_format manifest_release_tag selected_name checksum_key checksum_count checksum
 
     manifest_format="$(awk -F= '$1 == "format" { print substr($0, index($0, "=") + 1) }' "$manifest_file")"
     manifest_release_tag="$(awk -F= '$1 == "release_tag" { print substr($0, index($0, "=") + 1) }' "$manifest_file")"
@@ -291,6 +352,31 @@ resolve_archive_name() {
     fi
 
     ARCHIVE_NAME="$selected_name"
+    EXPECTED_ARCHIVE_SHA256=""
+    if [[ "$DOWNLOAD_SOURCE" == "3" ]]; then
+        checksum_key="${ARCHIVE_TARGET}_sha256"
+        checksum_count="$(awk -F= -v key="$checksum_key" '$1 == key { count += 1 } END { print count + 0 }' "$manifest_file")" || return 1
+        case "$checksum_count" in
+            0)
+                log "CNB 的旧 Release 清单没有 ${ARCHIVE_NAME} 的 SHA-256；将只执行归档结构和软件包元数据校验。" \
+                    "The legacy CNB Release manifest has no SHA-256 for ${ARCHIVE_NAME}; only archive structure and package metadata will be verified."
+                ;;
+            1)
+                checksum="$(awk -F= -v key="$checksum_key" '$1 == key { print substr($0, index($0, "=") + 1) }' "$manifest_file")" || return 1
+                [[ "$checksum" =~ ^[0-9A-Fa-f]{64}$ ]] || {
+                    log "CNB Release 清单中的 ${ARCHIVE_NAME} SHA-256 无效。" \
+                        "The CNB Release manifest has an invalid SHA-256 for ${ARCHIVE_NAME}."
+                    return 1
+                }
+                EXPECTED_ARCHIVE_SHA256="${checksum,,}"
+                ;;
+            *)
+                log "CNB Release 清单中的 ${ARCHIVE_NAME} SHA-256 不唯一。" \
+                    "The CNB Release manifest has multiple SHA-256 entries for ${ARCHIVE_NAME}."
+                return 1
+                ;;
+        esac
+    fi
     log "已选择 ${ARCHIVE_NAME}" "Selected ${ARCHIVE_NAME}"
 }
 
@@ -503,7 +589,7 @@ has_packages() {
 
 require_runtime_dependencies() {
     local command_name
-    for command_name in awk du find mktemp realpath sort stat tar; do
+    for command_name in awk du find mktemp realpath sha256sum sort stat tar; do
         command -v "$command_name" >/dev/null 2>&1 || \
             die "缺少运行安装器所需的命令：${command_name}。" \
                 "The installer requires the missing command: ${command_name}."
@@ -595,7 +681,9 @@ download_packages_once() {
     base_url="$(release_download_base)"
     manifest_file="$WORK_DIR/$MANIFEST_NAME"
     OFFICIAL_RELEASE_METADATA=""
-    resolve_official_manifest_sha256 || return 1
+    if [[ "$DOWNLOAD_SOURCE" != "3" ]]; then
+        resolve_official_manifest_sha256 || return 1
+    fi
 
     log "正在从 $(download_source_name "$DOWNLOAD_SOURCE") 下载 ${TARGET} 预编译包..." \
         "Downloading ${TARGET} prebuilt packages from $(download_source_name "$DOWNLOAD_SOURCE")..."
@@ -604,7 +692,9 @@ download_packages_once() {
         validate_release_asset_checksum "$manifest_file" "$EXPECTED_MANIFEST_SHA256" "$MANIFEST_NAME" || return 1
     fi
     resolve_archive_name "$manifest_file" || return 1
-    resolve_official_archive_sha256 || return 1
+    if [[ "$DOWNLOAD_SOURCE" != "3" ]]; then
+        resolve_official_archive_sha256 || return 1
+    fi
 
     archive_file="$WORK_DIR/$ARCHIVE_NAME"
     download_file "$base_url/$ARCHIVE_NAME" "$archive_file" || return 1
@@ -756,6 +846,7 @@ main() {
     archive_version="${ARCHIVE_NAME#"$ARCHIVE_PREFIX"}"
     archive_version="${archive_version%"$ARCHIVE_SUFFIX"}"
     record_component_version "$archive_version"
+    update_desktop_config
     log "安装完成，patched Mutter/Xwayland 已锁定。" \
         "Installation complete; patched Mutter/Xwayland packages are now locked."
 }
