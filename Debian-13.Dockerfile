@@ -12,7 +12,6 @@ ARG ENABLE_kfgj_ARG
 ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
-ARG ENABLE_tmoe_ARG
 ARG DISPLAY_BACKEND
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_systemd257_ARG
@@ -36,37 +35,20 @@ RUN (sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list 2>/dev/null |
     apt-get update && \
     apt-get upgrade -y
 
-# 优先复制自定义脚本
-COPY scripts/download-firmware /usr/local/bin/
+# 构建时只读挂载源码，由统一脚本安装所需文件。
+RUN --mount=type=bind,source=scripts,target=/run/droidspaces-scripts \
+    --mount=type=bind,from=droidspaces-tui,target=/run/droidspaces-tui \
+    bash /run/droidspaces-scripts/install-rootfs-tools.sh --tui-dir /run/droidspaces-tui
 
-# 将自定义的 bashrc 脚本复制到根文件系统的 profile 目录
-COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
-
-# 通用 Droidspaces USB Manager 安装器
-COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
-COPY scripts/systemd257.sh /usr/local/sbin/systemd257
-COPY scripts/tui/install-anland-kde.sh /usr/local/sbin/install-anland-kde
-COPY scripts/tui/install-anland-gnome.sh /usr/local/sbin/install-anland-gnome
-COPY scripts/tui/install-anland-next.sh /usr/local/sbin/install-anland-next
-COPY scripts/install-anland-desktop.sh /usr/local/sbin/install-anland-desktop
-COPY scripts/tui/install-mesa.sh /usr/local/sbin/install-mesa
-COPY scripts/tui/install-hangover-wine.sh /usr/local/sbin/install-hangover-wine
-COPY scripts/tui/install-winefonts.sh /usr/local/sbin/install-winefonts
-COPY scripts/tui/droidspaces-tui.sh /usr/local/bin/droidspaces-tui
-COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
-COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
-COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
-COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
-
-# 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-hangover-wine /usr/local/sbin/install-winefonts /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/droidspaces-tui /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
-    ln -s droidspaces-tui /usr/local/bin/dstui && \
-    ln -s droidspaces-tui /usr/local/bin/ds-tui
+# Debian 基础镜像默认通过 dpkg path-exclude 跳过 .mo 翻译文件；全局放开，
+# 保证所有桌面 profile 安装的软件带完整语言翻译。
+RUN sed -i 's|^path-exclude=/usr/share/locale/\*/LC_MESSAGES/\*.mo|#&|' \
+        /etc/dpkg/dpkg.cfg.d/excludes 2>/dev/null || true
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     # 核心工具组件
-    bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates locales bash-completion udev dbus systemd-sysv systemd-resolved fastfetch \
+    bash jq dialog util-linux coreutils diffutils file findutils grep sed gawk curl wget ca-certificates locales bash-completion udev dbus systemd-sysv systemd-resolved fastfetch \
     # 用户请求的基础开发/编辑工具
     git nano  sudo \
     # 网络与 SSH 工具
@@ -105,12 +87,6 @@ RUN apt-get update && \
     if [ "$ENABLE_docker_ARG" = "true" ]; then \
         apt-get install -y --no-install-recommends \
         docker.io docker-compose docker-cli; \
-    fi && \
-    ## 集成tmoe (可选)
-    if [ "$ENABLE_tmoe_ARG" = "true" ]; then \
-        git clone --depth=1 https://github.com/2moe/tmoe-linux.git /usr/local/etc/tmoe-linux/git && \
-        ln -sf /usr/local/etc/tmoe-linux/git/debian.sh /usr/local/bin/tmoe && \
-        chmod -R 755 /usr/local/etc/tmoe-linux; \
     fi && \
     apt-get autoremove -y && \
     apt-get clean && \
@@ -218,17 +194,8 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
         echo "--> [跳过] 未开启 Mesa 驱动安装"; \
     fi
 
-# 从 Google 官方 APT 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$DESKTOP" != "none" ]; then \
-        install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d && \
-        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/apt/keyrings/google-chrome.asc && \
-        grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/apt/keyrings/google-chrome.asc && \
-        printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main\n' > /etc/apt/sources.list.d/google-chrome.list && \
-        apt-get update && \
-        apt-get install -y --no-install-recommends google-chrome-stable; \
-    else \
-        echo "--> [跳过] 命令行 RootFS 不安装 Google Chrome"; \
-    fi
+# 安装并配置原生 ARM64 Google Chrome。
+RUN /usr/local/sbin/configure-chrome "$DESKTOP" "$DISPLAY_BACKEND"
 
 # 修复容器内的 DHCP 网络服务配置
 RUN mkdir -p /etc/systemd/network && \
@@ -408,11 +375,20 @@ RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
         bash /usr/local/sbin/systemd257; \
     else \
         echo "--> [跳过] 未启用 systemd 257 旧内核兼容"; \
-    fi && \
-    rm -f /usr/local/sbin/systemd257
+    fi
 
 # 最终清理 APT 包管理器缓存，尽可能缩减镜像层体积
-RUN apt-get clean && \
+# 打包前删除仅用于构建的一次性脚本；TUI 和运行时脚本保留。
+RUN rm -f \
+        /usr/local/sbin/configure-chrome \
+        /usr/local/sbin/configure-desktop \
+        /usr/local/sbin/install-desktop \
+        /usr/local/sbin/install-anland-desktop \
+        /usr/local/sbin/install-droidspaces-usb-manager \
+        /usr/local/sbin/systemd257 \
+        /usr/local/sbin/nosnap && \
+    rm -rf /usr/local/lib/droidspaces/desktops && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # 阶段 2：将完整的根文件系统导出到 scratch（空白层），以便外部直接提取或打包成 tarfs

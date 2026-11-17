@@ -24,7 +24,7 @@ on:
         type: string
         default: Gold
       desktop:
-        description: 桌面选择
+        description: 主桌面（负责开机自启动的桌面）
         required: true
         type: choice
         default: KDE
@@ -34,13 +34,22 @@ on:
           - KDE mobile
           - GNOME
           - Anland Next
+          - Niri
+          - Hyprland
+          - Mango
+          - Denial
+      extra_desktops:
+        description: "额外桌面，用逗号分隔（例如 Niri,Hyprland）"
+        required: false
+        type: string
+        default: ""
       desktop_autostart:
-        description: 桌面开机自启动
+        description: 桌面开机自启动（桌面为 none 时自动关闭）
         required: true
         type: boolean
         default: true
       display_backend:
-        description: 显示后端（KDE mobile/GNOME/Anland Next 固定使用 Anland Wayland）
+        description: 显示后端（KDE mobile/GNOME/Anland Next/Niri/Hyprland/Mango/Denial 固定使用 Anland Wayland）
         required: true
         type: choice
         default: anland-wayland
@@ -71,11 +80,6 @@ on:
         required: true
         type: boolean
         default: false
-      enable_tmoe:
-        description: 集成 TMOE
-        required: true
-        type: boolean
-        default: true
       nosnap:
         description: 移除 Ubuntu Snap
         required: true
@@ -134,13 +138,13 @@ jobs:
       build_target: ${{ inputs.build_target }}
       custom_username: ${{ inputs.custom_username }}
       desktop: ${{ inputs.desktop }}
+      extra_desktops: ${{ inputs.extra_desktops }}
       desktop_autostart: ${{ inputs.desktop_autostart }}
       display_backend: ${{ inputs.display_backend }}
       PulseAudio: ${{ inputs.PulseAudio }}
       enable_zh_tz: ${{ inputs.enable_zh_tz }}
       enable_mesa: ${{ inputs.enable_mesa }}
       enable_8gen2_wayland: ${{ inputs.enable_8gen2_wayland }}
-      enable_tmoe: ${{ inputs.enable_tmoe }}
       nosnap: ${{ inputs.nosnap }}
       enable_systemd257: ${{ inputs.enable_systemd257 }}
       enable_srf: ${{ inputs.enable_srf }}

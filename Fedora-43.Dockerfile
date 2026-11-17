@@ -12,7 +12,6 @@ ARG ENABLE_kfgj_ARG
 ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
-ARG ENABLE_tmoe_ARG
 ARG DISPLAY_BACKEND
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_systemd257_ARG
@@ -23,33 +22,21 @@ ARG ANLAND_PACKAGE_REVISION=unknown
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 通用 Droidspaces USB Manager 安装器
-COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
-COPY scripts/systemd257.sh /usr/local/sbin/systemd257
-COPY scripts/tui/install-anland-kde.sh /usr/local/sbin/install-anland-kde
-COPY scripts/tui/install-anland-gnome.sh /usr/local/sbin/install-anland-gnome
-COPY scripts/tui/install-anland-next.sh /usr/local/sbin/install-anland-next
-COPY scripts/install-anland-desktop.sh /usr/local/sbin/install-anland-desktop
-COPY scripts/tui/install-mesa.sh /usr/local/sbin/install-mesa
-COPY scripts/tui/install-hangover-wine.sh /usr/local/sbin/install-hangover-wine
-COPY scripts/tui/install-winefonts.sh /usr/local/sbin/install-winefonts
-COPY scripts/tui/droidspaces-tui.sh /usr/local/bin/droidspaces-tui
-COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
-COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
-COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
-COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
+# 构建时只读挂载源码，由统一脚本安装所需文件。
+RUN --mount=type=bind,source=scripts,target=/run/droidspaces-scripts \
+    --mount=type=bind,from=droidspaces-tui,target=/run/droidspaces-tui \
+    bash /run/droidspaces-scripts/install-rootfs-tools.sh --tui-dir /run/droidspaces-tui
 
-# 加速下载
-RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf && \
+# Fedora 容器基础镜像默认只解包 en_US 翻译文件，桌面的 zh_CN 翻译会在
+# RPM 安装时被过滤；全局放开全部语言，供所有桌面共用。
+RUN echo '%_install_langs all' > /etc/rpm/macros.image-language-conf && \
+    echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf && \
     echo "fastestmirror=True" >> /etc/dnf/dnf.conf && \
     echo "defaultyes=True" >> /etc/dnf/dnf.conf
 
-RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-hangover-wine /usr/local/sbin/install-winefonts /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/droidspaces-tui /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
-    ln -s droidspaces-tui /usr/local/bin/dstui && \
-    ln -s droidspaces-tui /usr/local/bin/ds-tui && \
-    dnf install -y --setopt=install_weak_deps=False \
+RUN dnf install -y --setopt=install_weak_deps=False \
     # 核心工具组件
-    bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates bash-completion systemd-udev dbus-daemon systemd systemd-pam systemd-resolved fastfetch \
+    bash jq dialog util-linux coreutils diffutils file findutils grep sed gawk curl wget ca-certificates bash-completion systemd-udev dbus-daemon systemd systemd-pam systemd-resolved fastfetch \
     # 用户请求的基础开发/编辑工具
     git nano sudo \
     # 网络与 SSH 工具（包含 DHCP 客户端）
@@ -80,12 +67,6 @@ RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/
     if [ "$ENABLE_docker_ARG" = "true" ]; then \
         dnf install -y --setopt=install_weak_deps=False \
         moby-engine docker-compose docker-cli; \
-    fi && \
-    ## 集成tmoe (可选)
-    if [ "$ENABLE_tmoe_ARG" = "true" ]; then \
-        git clone --depth=1 https://github.com/2moe/tmoe-linux.git /usr/local/etc/tmoe-linux/git && \
-        ln -sf /usr/local/etc/tmoe-linux/git/debian.sh /usr/local/bin/tmoe && \
-        chmod -R 755 /usr/local/etc/tmoe-linux; \
     fi && \
     dnf upgrade -y && \
     dnf clean all && \
@@ -192,24 +173,8 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
         echo "--> [跳过] 未开启 Mesa 驱动安装"; \
     fi
 
-# 从 Google 官方 RPM 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$DESKTOP" != "none" ]; then \
-        install -d -m 0755 /etc/pki/rpm-gpg /etc/yum.repos.d && \
-        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/pki/rpm-gpg/RPM-GPG-KEY-google-chrome && \
-        grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/pki/rpm-gpg/RPM-GPG-KEY-google-chrome && \
-        printf '%s\n' \
-            '[google-chrome]' \
-            'name=Google Chrome' \
-            'baseurl=https://dl.google.com/linux/chrome/rpm/stable/$basearch' \
-            'enabled=1' \
-            'gpgcheck=1' \
-            'repo_gpgcheck=0' \
-            'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-google-chrome' \
-            > /etc/yum.repos.d/google-chrome.repo && \
-        dnf install -y --setopt=install_weak_deps=False google-chrome-stable; \
-    else \
-        echo "--> [跳过] 命令行 RootFS 不安装 Google Chrome"; \
-    fi
+# 安装并配置原生 ARM64 Google Chrome。
+RUN /usr/local/sbin/configure-chrome "$DESKTOP" "$DISPLAY_BACKEND"
 
 # 修复容器内的 DHCP 网络服务配置
 RUN mkdir -p /etc/systemd/network && \
@@ -239,6 +204,14 @@ getent group droidspaces-gpu >/dev/null || groupadd -g 786 -r droidspaces-gpu
 
 usermod -a -G aid_inet,aid_net_raw,input,video,tty,droidspaces-gpu root || true
 usermod -a -G aid_inet,aid_net_raw,input,video,tty,wheel,droidspaces-gpu ${USERNAME} || true
+
+# --- PipeWire 实时调度权限：修复 Plasma/KWin 反复重启 ---
+getent group pipewire >/dev/null || groupadd -r pipewire
+usermod -a -G pipewire ${USERNAME} || true
+mkdir -p /etc/systemd/system.conf.d /etc/systemd/user.conf.d
+printf '[Manager]\nDefaultLimitRTPRIO=70\nDefaultLimitNICE=-19\nDefaultLimitRTTIME=infinity\n' \
+    > /etc/systemd/system.conf.d/50-pipewire-rt.conf
+cp /etc/systemd/system.conf.d/50-pipewire-rt.conf /etc/systemd/user.conf.d/50-pipewire-rt.conf
 
 # 确保未来通过 useradd 创建的新用户也会进入附加组 (Fedora 通过 /etc/default/useradd 处理)
 if [ -f /etc/default/useradd ]; then
@@ -387,11 +360,20 @@ RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
         bash /usr/local/sbin/systemd257; \
     else \
         echo "--> [跳过] 未启用 systemd 257 旧内核兼容"; \
-    fi && \
-    rm -f /usr/local/sbin/systemd257
+    fi
 
 # 最终清理 DNF 缓存以缩减镜像体积
-RUN dnf clean all && \
+# 打包前删除仅用于构建的一次性脚本；TUI 和运行时脚本保留。
+RUN rm -f \
+        /usr/local/sbin/configure-chrome \
+        /usr/local/sbin/configure-desktop \
+        /usr/local/sbin/install-desktop \
+        /usr/local/sbin/install-anland-desktop \
+        /usr/local/sbin/install-droidspaces-usb-manager \
+        /usr/local/sbin/systemd257 \
+        /usr/local/sbin/nosnap && \
+    rm -rf /usr/local/lib/droidspaces/desktops && \
+    dnf clean all && \
     rm -rf /var/cache/dnf/* /tmp/* /var/tmp/*
 
 # 阶段 2：将完整的根文件系统导出到 scratch

@@ -14,39 +14,25 @@ ARG ENABLE_kfgj_ARG
 ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
-ARG ENABLE_tmoe_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
 ARG ANLAND_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
 ARG ANLAND_PACKAGE_REVISION=unknown
 ######################################################
 
-COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
-COPY scripts/systemd257.sh /usr/local/sbin/systemd257
-COPY scripts/tui/install-anland-kde.sh /usr/local/sbin/install-anland-kde
-COPY scripts/tui/install-anland-gnome.sh /usr/local/sbin/install-anland-gnome
-COPY scripts/tui/install-anland-next.sh /usr/local/sbin/install-anland-next
-COPY scripts/install-anland-desktop.sh /usr/local/sbin/install-anland-desktop
-COPY scripts/tui/install-mesa.sh /usr/local/sbin/install-mesa
-COPY scripts/tui/install-hangover-wine.sh /usr/local/sbin/install-hangover-wine
-COPY scripts/tui/install-winefonts.sh /usr/local/sbin/install-winefonts
-COPY scripts/tui/droidspaces-tui.sh /usr/local/bin/droidspaces-tui
-COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
-COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
-COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
-COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
+# 构建时只读挂载源码，由统一脚本安装所需文件。
+RUN --mount=type=bind,source=scripts,target=/run/droidspaces-scripts \
+    --mount=type=bind,from=droidspaces-tui,target=/run/droidspaces-tui \
+    bash /run/droidspaces-scripts/install-rootfs-tools.sh --tui-dir /run/droidspaces-tui
 
-RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-hangover-wine /usr/local/sbin/install-winefonts /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/droidspaces-tui /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
-    ln -s droidspaces-tui /usr/local/bin/dstui && \
-    ln -s droidspaces-tui /usr/local/bin/ds-tui && \
-    sed -i '/^#ParallelDownloads/s/^#//' /etc/pacman.conf && \
+RUN sed -i '/^#ParallelDownloads/s/^#//' /etc/pacman.conf && \
     sed -i '/NoExtract.*locale/d' /etc/pacman.conf && \
     sed -i '/NoExtract.*i18n/d' /etc/pacman.conf && \
     pacman -Sy --noconfirm archlinux-keyring glibc && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm --needed \
     # 核心工具组件
-    bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates bash-completion dbus systemd pam fastfetch logrotate \
+    bash jq dialog util-linux coreutils diffutils file findutils grep sed gawk curl wget ca-certificates bash-completion dbus systemd pam fastfetch logrotate \
     # 用户请求的基础开发/编辑工具
     git nano sudo \
     # 网络与 SSH 工具
@@ -77,18 +63,13 @@ RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/
     if [ "$ENABLE_docker_ARG" = "true" ]; then \
         pacman -S --noconfirm --needed \
         docker docker-compose; \
-    fi && \
-    ## 集成tmoe (可选)
-    if [ "$ENABLE_tmoe_ARG" = "true" ]; then \
-        git clone --depth=1 https://github.com/2moe/tmoe-linux.git /usr/local/etc/tmoe-linux/git && \
-        ln -sf /usr/local/etc/tmoe-linux/git/debian.sh /usr/local/bin/tmoe && \
-        chmod -R 755 /usr/local/etc/tmoe-linux; \
     fi
 
 # 启用 Anland 时从固定滚动 GitHub Release 安装对应桌面的 ARM64 包。
 RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
         echo "--> [enabled] Installing Anland $DESKTOP packages (${ANLAND_PACKAGE_REVISION})..." && \
         ANLAND_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
+        ANLAND_NIRI_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
         /usr/local/sbin/install-anland-desktop "$DESKTOP" --1 && \
         echo "--> [enabled] Anland $DESKTOP support installed"; \
     fi
@@ -191,45 +172,8 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
         echo "--> [跳过] 未开启 Mesa 驱动安装"; \
     fi
 
-# 通过 AUR 安装原生 ARM64 Google Chrome，替换 Chromium。
-RUN if [ "$DESKTOP" != "none" ]; then \
-        : > /tmp/chrome-build-packages && \
-        for package in $(pacman -Sgq base-devel); do \
-            if ! pacman -Qq "$package" >/dev/null 2>&1; then \
-                printf '%s\n' "$package" >> /tmp/chrome-build-packages; \
-            fi; \
-        done && \
-        pacman -S --noconfirm --needed base-devel git && \
-        useradd --system --create-home --home-dir /tmp/chrome-build --shell /bin/bash chrome-build && \
-        runuser -u chrome-build -- git clone --depth=1 https://aur.archlinux.org/google-chrome.git /tmp/chrome-build/google-chrome && \
-        grep -Eq '^[[:space:]]*arch = aarch64$' /tmp/chrome-build/google-chrome/.SRCINFO && \
-        grep -Eq '^[[:space:]]*source_aarch64 = https://dl\.google\.com/linux/chrome/deb/.+_arm64\.deb$' /tmp/chrome-build/google-chrome/.SRCINFO && \
-        grep -Eq '^[[:space:]]*sha512sums_aarch64 = [0-9a-fA-F]{128}$' /tmp/chrome-build/google-chrome/.SRCINFO && \
-        CHROME_DEPENDENCIES="$(sed -n 's/^[[:space:]]*depends = //p' /tmp/chrome-build/google-chrome/.SRCINFO | sed 's/[<>=].*$//' | sort -u)" && \
-        [ -n "$CHROME_DEPENDENCIES" ] && \
-        if printf '%s\n' "$CHROME_DEPENDENCIES" | grep -Eqv '^[A-Za-z0-9@._+][A-Za-z0-9@._+:-]*$'; then \
-            echo "AUR 配方包含无效的 Chrome 依赖" >&2; \
-            exit 1; \
-        fi && \
-        pacman -S --noconfirm --needed --asdeps $CHROME_DEPENDENCIES && \
-        runuser -u chrome-build -- bash -c 'cd "$1" && makepkg --cleanbuild --clean --noconfirm' _ /tmp/chrome-build/google-chrome && \
-        CHROME_PACKAGE="$(find /tmp/chrome-build/google-chrome -maxdepth 1 -type f -name 'google-chrome-*.pkg.tar.*' ! -name '*.sig' -print -quit)" && \
-        [ -n "$CHROME_PACKAGE" ] && \
-        [ "$(find /tmp/chrome-build/google-chrome -maxdepth 1 -type f -name 'google-chrome-*.pkg.tar.*' ! -name '*.sig' -print | wc -l)" -eq 1 ] && \
-        sed -e '/^[[:space:]]*LocalFileSigLevel[[:space:]]*=/d' \
-            -e '/^\[options\][[:space:]]*$/a LocalFileSigLevel = Optional' \
-            /etc/pacman.conf > /tmp/pacman-chrome.conf && \
-        [ "$(pacman --config /tmp/pacman-chrome.conf -Qqp "$CHROME_PACKAGE")" = "google-chrome" ] && \
-        LC_ALL=C pacman --config /tmp/pacman-chrome.conf -Qip "$CHROME_PACKAGE" | grep -Eq '^Architecture[[:space:]]*: aarch64$' && \
-        pacman --config /tmp/pacman-chrome.conf -U --noconfirm "$CHROME_PACKAGE" && \
-        userdel -r chrome-build && \
-        if [ -s /tmp/chrome-build-packages ]; then \
-            pacman -Rns --noconfirm $(cat /tmp/chrome-build-packages); \
-        fi && \
-        rm -f /tmp/chrome-build-packages /tmp/pacman-chrome.conf; \
-    else \
-        echo "--> [跳过] 命令行 RootFS 不安装 Google Chrome"; \
-    fi
+# 安装并配置原生 ARM64 Google Chrome。
+RUN /usr/local/sbin/configure-chrome "$DESKTOP" "$DISPLAY_BACKEND"
 
 # 修复容器内的 DHCP 网络服务配置
 RUN mkdir -p /etc/systemd/network && \
@@ -389,11 +333,20 @@ RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
         bash /usr/local/sbin/systemd257; \
     else \
         echo "--> [跳过] 未启用 systemd 257 旧内核兼容"; \
-    fi && \
-    rm -f /usr/local/sbin/systemd257
+    fi
 
 # 彻底清理 pacman 缓存
-RUN rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
+# 打包前删除仅用于构建的一次性脚本；TUI 和运行时脚本保留。
+RUN rm -f \
+        /usr/local/sbin/configure-chrome \
+        /usr/local/sbin/configure-desktop \
+        /usr/local/sbin/install-desktop \
+        /usr/local/sbin/install-anland-desktop \
+        /usr/local/sbin/install-droidspaces-usb-manager \
+        /usr/local/sbin/systemd257 \
+        /usr/local/sbin/nosnap && \
+    rm -rf /usr/local/lib/droidspaces/desktops && \
+    rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
 # 阶段 2：将完整的根文件系统导出到 scratch（空白层），以便外部直接提取或打包成 tarfs
 FROM scratch AS export
 COPY --from=customizer / /

@@ -2,6 +2,7 @@
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$REPO_DIR/scripts/lib/desktop-config.sh"
 source "$REPO_DIR/scripts/lib/anland-build.sh"
+source "$REPO_DIR/scripts/lib/rootfs-config.sh"
 
 : "${VERSION:=dev}"
 ARCH=$(uname -m)          # 获取当前系统架构
@@ -12,7 +13,7 @@ ENABLE_8gen2_wayland="false"
 ENABLE_systemd257="false"
 DISPLAY_BACKEND_INPUT="X11"
 # 解析输入参数 (-i 指定 Dockerfile，-v 指定版本号)
-while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
+while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:n:S:t:u:A:" opt; do
   case $opt in
     i) DOCKERFILE="$OPTARG" ;; # -i 参数赋值给 DOCKERFILE 变量
     v) VERSION="$OPTARG" ;;    # -v 参数赋值给 VERSION 变量
@@ -28,7 +29,6 @@ while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
     e) ENABLE_zip="$OPTARG" ;;
     f) ENABLE_docker="$OPTARG" ;;
     h) ENABLE_srf="$OPTARG" ;; # 输入法 fcitx5
-    j) ENABLE_tmoe="$OPTARG" ;; # tmoe
     n) ENABLE_nosnap="$OPTARG" ;; # Ubuntu nosnap
     S) ENABLE_systemd257="$OPTARG" ;; # systemd 257 旧内核兼容
     t) ENABLE_8gen2_wayland="$OPTARG" ;; # 修复骁龙8 Gen 2 Wayland 花屏
@@ -43,7 +43,7 @@ done
 : "${ANLAND_PACKAGE_REVISION:=}"
 
 if ! DESKTOP="$(desktop_normalize "${DESKTOP_INPUT:-}")"; then
-  echo "错误：-K 只支持 none、KDE、'KDE mobile'、GNOME 或 'Anland Next'。" >&2
+  echo "错误：-K 桌面名称无效。" >&2
   exit 1
 fi
 if [[ -n "${LEGACY_ANLAND_INPUT:-}" ]]; then
@@ -80,7 +80,8 @@ case "$ENABLE_systemd257" in
   *) echo "错误：-S 只支持 true 或 false。" >&2; exit 1 ;;
 esac
 
-if [[ "$DESKTOP" == kde-mobile || "$DESKTOP" == gnome || "$DESKTOP" == anland-next ]]; then
+if [[ "$DESKTOP" == kde-mobile || "$DESKTOP" == gnome || "$DESKTOP" == anland-next || \
+      "$DESKTOP" == niri || "$DESKTOP" == hyprland || "$DESKTOP" == mango || "$DESKTOP" == denial ]]; then
   DISPLAY_BACKEND="anland-wayland"
 fi
 if [[ "$DISPLAY_BACKEND" == anland-wayland ]]; then
@@ -130,6 +131,15 @@ echo " 显示后端：$DISPLAY_BACKEND"
 echo " 桌面自启动：$DESKTOP_AUTOSTART"
 echo "========================================================="
 
+# 为本次构建获取当前发布的 TUI 与安装器。
+mkdir -p -- "$REPO_DIR/.build" || exit 1
+TUI_DIR="$(mktemp -d "$REPO_DIR/.build/tui.XXXXXXXX")" || exit 1
+trap 'rm -rf -- "$TUI_DIR"; rm -f -- "$TUI_DIR.lock"' EXIT
+if ! bash "$REPO_DIR/scripts/sync-tui.sh" --output "$TUI_DIR" \
+    --source "${DROIDSPACES_TUI_SOURCE:-github}"; then
+  exit 1
+fi
+
 if [ -n "$ANLAND_PACKAGE_FAMILY" ]; then
   if ! anland_prepare_release "$ANLAND_PACKAGE_FAMILY" "$ANLAND_RELEASE_REPOSITORY" "$ANLAND_PACKAGE_REVISION"; then
     exit 1
@@ -176,6 +186,7 @@ echo "正在运行 Docker Build (原生模式)..."
 
 
 docker buildx build \
+  --build-context "droidspaces-tui=$TUI_DIR" \
   --target export \
   --output type=tar,dest="$TEMP_TAR" \
   --build-arg DESKTOP="$DESKTOP" \
@@ -190,7 +201,6 @@ docker buildx build \
   --build-arg ENABLE_zip_ARG="$ENABLE_zip" \
   --build-arg ENABLE_docker_ARG="$ENABLE_docker" \
   --build-arg ENABLE_srf_ARG="$ENABLE_srf" \
-  --build-arg ENABLE_tmoe_ARG="$ENABLE_tmoe" \
   --build-arg ENABLE_nosnap_ARG="$ENABLE_nosnap" \
   --build-arg ENABLE_systemd257_ARG="$ENABLE_systemd257" \
   --build-arg ENABLE_8gen2_wayland_ARG="$ENABLE_8gen2_wayland" \
@@ -204,11 +214,9 @@ docker buildx build \
 
 
 
-echo "正在压缩构建产物 (使用 xz 最高压缩率 - 开启多线程加速)..."
-xz -T0 -9 -f "$TEMP_TAR"
-
-echo "正在重命名最终文件: $FINAL_NAME"
-mv "${TEMP_TAR}.xz" "$FINAL_NAME"
+echo "正在写入推荐配置并压缩构建产物..."
+package_rootfs_with_config "$TEMP_TAR" "$FINAL_NAME" "$DESKTOP" "$DISPLAY_BACKEND" \
+  "${PulseAudio:-none}" "${ENABLE_docker:-false}" "${ENABLE_mesa:-false}" "${ENABLE_zh_tz:-false}"
 
 echo "========================================================="
 echo " 恭喜！构建成功完成: $FINAL_NAME"

@@ -24,7 +24,7 @@ on:
         type: string
         default: akronnos
       desktop:
-        description: Desktop
+        description: Primary desktop (the one that autostarts)
         required: true
         type: choice
         default: KDE
@@ -34,13 +34,22 @@ on:
           - KDE mobile
           - GNOME
           - Anland Next
+          - Niri
+          - Hyprland
+          - Mango
+          - Denial
+      extra_desktops:
+        description: "Extra desktops, comma-separated (e.g. Niri,Hyprland)"
+        required: false
+        type: string
+        default: ""
       desktop_autostart:
-        description: Start desktop on boot
+        description: Start desktop on boot (auto-disabled when desktop is none)
         required: true
         type: boolean
         default: true
       display_backend:
-        description: Display backend (KDE mobile/GNOME/Anland Next always use Anland Wayland)
+        description: Display backend (Arch KDE and KDE mobile/GNOME/Anland Next/Niri/Hyprland/Mango/Denial always use Anland Wayland)
         required: true
         type: choice
         default: x11
@@ -71,11 +80,6 @@ on:
         required: true
         type: boolean
         default: false
-      enable_tmoe:
-        description: Integrate TMOE
-        required: true
-        type: boolean
-        default: true
       nosnap:
         description: Remove Ubuntu Snap
         required: true
@@ -134,13 +138,13 @@ jobs:
       build_target: ${{ inputs.build_target }}
       custom_username: ${{ inputs.custom_username }}
       desktop: ${{ inputs.desktop }}
+      extra_desktops: ${{ inputs.extra_desktops }}
       desktop_autostart: ${{ inputs.desktop_autostart }}
       display_backend: ${{ inputs.display_backend }}
       PulseAudio: ${{ inputs.PulseAudio }}
       enable_zh_tz: ${{ inputs.enable_zh_tz }}
       enable_mesa: ${{ inputs.enable_mesa }}
       enable_8gen2_wayland: ${{ inputs.enable_8gen2_wayland }}
-      enable_tmoe: ${{ inputs.enable_tmoe }}
       nosnap: ${{ inputs.nosnap }}
       enable_systemd257: ${{ inputs.enable_systemd257 }}
       enable_srf: ${{ inputs.enable_srf }}
